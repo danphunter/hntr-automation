@@ -180,6 +180,7 @@ export default function ProjectDetail() {
   // Step 5
   const [renderProgress, setRenderProgress] = useState(null);
   const [usePlaceholders, setUsePlaceholders] = useState(false);
+  const [kenBurns, setKenBurns] = useState(false);
   const pollRef = useRef(null);
 
   // Keep scenesRef in sync for use inside async auto-generate
@@ -410,7 +411,7 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      const result = await api.startRender(id, usePlaceholders);
+      const result = await api.startRender(id, usePlaceholders, kenBurns);
       setRenderProgress({ status: 'processing', progress: 0 });
 
       pollRef.current = setInterval(async () => {
@@ -462,15 +463,6 @@ export default function ProjectDetail() {
             }`}>{project.status?.replace('_', ' ')}</span>
           </div>
         </div>
-        {project.status === 'complete' && (
-          <a
-            href={api.downloadUrl(id)}
-            className="btn-primary flex items-center gap-2 flex-shrink-0"
-            download={`${project.title}.mp4`}
-          >
-            <Download size={15} /> Download MP4
-          </a>
-        )}
       </div>
 
       {/* ── Wizard progress bar ─────────────────────────────────────────────── */}
@@ -823,6 +815,20 @@ export default function ProjectDetail() {
             </label>
           )}
 
+          {/* Ken Burns toggle */}
+          <label className="card p-3 flex items-center gap-3 cursor-pointer hover:border-gray-700 transition-colors">
+            <input
+              type="checkbox"
+              checked={kenBurns}
+              onChange={e => setKenBurns(e.target.checked)}
+              className="w-4 h-4 accent-indigo-500 flex-shrink-0"
+            />
+            <div>
+              <div className="text-sm text-gray-300">Ken Burns zoom effect</div>
+              <div className="text-xs text-gray-600">Subtle slow zoom/pan on each scene — off by default for faster renders</div>
+            </div>
+          </label>
+
           {/* Render progress */}
           {renderProgress && (
             <div className="card p-4">
@@ -887,7 +893,7 @@ export default function ProjectDetail() {
           <div className="card p-4 bg-gray-900/30 text-xs text-gray-500 space-y-1">
             <p className="font-medium text-gray-400">What gets exported:</p>
             <p>• Each scene image displayed for its duration</p>
-            <p>• Ken Burns zoom/pan effect applied per scene</p>
+            <p>• {kenBurns ? 'Ken Burns zoom/pan effect applied per scene' : 'Static images (no zoom effect)'}</p>
             <p>• Voiceover audio overlaid and synced</p>
             <p>• 1920×1080 MP4, H.264, ready for CapCut</p>
           </div>

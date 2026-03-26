@@ -9,7 +9,8 @@ const { authMiddleware } = require('../middleware/auth');
 const router = express.Router();
 
 const RENDERS_DIR = path.join(__dirname, '..', 'renders');
-const IMAGES_DIR = path.join(__dirname, '..', 'uploads', 'images');
+const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
+const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 
 // Track active render jobs
@@ -58,12 +59,14 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   db.prepare('UPDATE projects SET status = ?, render_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run('rendering', req.params.projectId);
 
+  const kenBurns = req.body.kenBurns === true;
+
   renderJobs.set(jobId, { status: 'processing', progress: 0, projectId: req.params.projectId });
 
   res.json({ jobId, message: 'Render started' });
 
   // Run render async
-  runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db).catch(err => {
+  runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db, kenBurns).catch(err => {
     console.error('Render failed:', err);
     renderJobs.set(jobId, { status: 'error', error: err.message, projectId: req.params.projectId });
     db.prepare("UPDATE projects SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -71,7 +74,7 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   });
 });
 
-async function runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db) {
+async function runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db, kenBurns = false) {
   const tmpDir = path.join(RENDERS_DIR, `tmp-${jobId}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -80,16 +83,41 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     const scenePaths = [];
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
-      let imgPath = scene.image_path;
+      let imgPath = null;
 
-      // If image_path doesn't resolve, try deriving path from image_url
-      if (!imgPath || !fs.existsSync(imgPath)) {
-        if (scene.image_url) {
-          // image_url is like /api/generate/image-file/<filename>
-          const filename = scene.image_url.split('/').pop();
-          const derived = path.join(IMAGES_DIR, filename);
-          if (fs.existsSync(derived)) imgPath = derived;
+      // Resolve image path: extract filename from image_url or image_path and re-resolve
+      // against IMAGES_DIR. This handles cases where the stored absolute path is stale
+      // (e.g. after a container restart on Railway).
+      const rawPath = scene.image_path || '';
+      const rawUrl = scene.image_url || '';
+      let filename = null;
+      if (rawUrl) {
+        // image_url = /api/generate/image-file/img-xxx.jpg
+        filename = path.basename(rawUrl);
+      } else if (rawPath) {
+        filename = path.basename(rawPath);
+      }
+
+      if (filename) {
+        const resolvedPath = path.join(IMAGES_DIR, filename);
+        const resolvedExists = fs.existsSync(resolvedPath);
+        console.log(`[render] Scene ${i + 1}: image_url="${rawUrl}" image_path="${rawPath}" resolved="${resolvedPath}" exists=${resolvedExists}`);
+        if (resolvedExists) {
+          imgPath = resolvedPath;
         }
+      } else {
+        console.log(`[render] Scene ${i + 1}: no image_url or image_path set — using placeholder`);
+      }
+
+      // Fallback: try stored absolute path directly (backward compat)
+      if (!imgPath && rawPath && fs.existsSync(rawPath)) {
+        console.log(`[render] Scene ${i + 1}: resolved path missing, falling back to stored image_path`);
+        imgPath = rawPath;
+      }
+
+      if (!imgPath) {
+        console.log(`[render] Scene ${i + 1}: image not found, using placeholder`);
+        imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
       }
 
       if (!imgPath || !fs.existsSync(imgPath)) {
@@ -109,19 +137,27 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
       const frames = Math.ceil(dur * FPS);
-      const zoomDir = i % 2 === 0 ? 'in' : 'out';
-      const startZoom = zoomDir === 'in' ? 1.0 : 1.05;
-      const endZoom = zoomDir === 'in' ? 1.05 : 1.0;
-      const zoomStep = (endZoom - startZoom) / frames;
-      const zoomExpr = zoomDir === 'in'
-        ? `min(zoom+${zoomStep.toFixed(6)},${endZoom})`
-        : `max(zoom-${Math.abs(zoomStep).toFixed(6)},${endZoom})`;
+      let filter;
+      if (kenBurns) {
+        const zoomDir = i % 2 === 0 ? 'in' : 'out';
+        const startZoom = zoomDir === 'in' ? 1.0 : 1.05;
+        const endZoom = zoomDir === 'in' ? 1.05 : 1.0;
+        const zoomStep = (endZoom - startZoom) / frames;
+        const zoomExpr = zoomDir === 'in'
+          ? `min(zoom+${zoomStep.toFixed(6)},${endZoom})`
+          : `max(zoom-${Math.abs(zoomStep).toFixed(6)},${endZoom})`;
 
-      // zoompan at 1280x720 (lower memory), then scale to 1920x1080
-      const filter =
-        `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,` +
-        `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1280x720:fps=${FPS},` +
-        `scale=1920:1080,setpts=PTS-STARTPTS`;
+        // zoompan at 1280x720 (lower memory), then scale to 1920x1080
+        filter =
+          `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,` +
+          `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1280x720:fps=${FPS},` +
+          `scale=1920:1080,setpts=PTS-STARTPTS`;
+      } else {
+        // Static: scale to 1920x1080 and hold for scene duration
+        filter =
+          `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
+          `fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
+      }
 
       console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur}s, ${frames} frames)...`);
 

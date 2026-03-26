@@ -77,8 +77,8 @@ export const api = {
   resetWhiskToken: (id) => request('POST', `/generate/whisk-tokens/${id}/reset`),
 
   // Render
-  startRender: (projectId, usePlaceholders = false) =>
-    request('POST', `/render/${projectId}`, { usePlaceholders }),
+  startRender: (projectId, usePlaceholders = false, kenBurns = false) =>
+    request('POST', `/render/${projectId}`, { usePlaceholders, kenBurns }),
   getRenderStatus: (jobId) => request('GET', `/render/status/${jobId}`),
   downloadUrl: (projectId) => `${BASE}/render/download/${projectId}?token=${getToken()}`,
 

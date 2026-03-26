@@ -6,8 +6,8 @@ const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
-// Use UPLOADS_PATH env var (set by index.js, points to /data/uploads on Railway for persistence)
-const IMAGES_DIR = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads'), 'images');
+const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
+const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
 function getSettings(db) {
