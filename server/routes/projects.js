@@ -26,14 +26,18 @@ router.get('/', authMiddleware, (req, res) => {
   let projects;
   if (req.user.role === 'admin') {
     projects = db.prepare(`
-      SELECT p.*, u.display_name as editor_name, u.username as editor_username
+      SELECT p.*, u.display_name as editor_name, u.username as editor_username,
+        (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id AND s.image_url != '' AND s.image_url IS NOT NULL) as image_count,
+        (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id) as scene_count
       FROM projects p
       LEFT JOIN users u ON p.user_id = u.id
       ORDER BY p.created_at DESC
     `).all();
   } else {
     projects = db.prepare(`
-      SELECT p.*, u.display_name as editor_name
+      SELECT p.*, u.display_name as editor_name,
+        (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id AND s.image_url != '' AND s.image_url IS NOT NULL) as image_count,
+        (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id) as scene_count
       FROM projects p
       LEFT JOIN users u ON p.user_id = u.id
       WHERE p.user_id = ?
@@ -176,8 +180,10 @@ router.post('/:id/scenes', authMiddleware, (req, res) => {
 
   insertMany(scenes);
 
-  db.prepare('UPDATE projects SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run('in_progress', req.params.id);
+  // Set started_at only the first time (when it's still null)
+  db.prepare(`UPDATE projects SET status = 'in_progress', updated_at = CURRENT_TIMESTAMP,
+    started_at = CASE WHEN started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END
+    WHERE id = ?`).run(req.params.id);
 
   const saved = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.id);
   res.json(saved);

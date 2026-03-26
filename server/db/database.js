@@ -15,11 +15,11 @@ function getDb() {
 }
 
 const DEFAULT_STYLES = [
-  { id: 'style-bible', name: 'Bible Animation', description: 'Cinematic painterly scenes from scripture — epic, reverent, full of light and depth.', prompt_prefix: 'cinematic painterly biblical scene, dramatic lighting, epic composition, high detail, oil painting style,', prompt_suffix: ', golden hour light, epic scale, reverent atmosphere, 16:9 widescreen', color: '#7C3AED', icon: '✝️' },
-  { id: 'style-finance', name: 'Finance Explainer', description: 'Clean minimal infographics for financial and business content.', prompt_prefix: 'clean minimalist infographic illustration, flat design, professional business style,', prompt_suffix: ', white background, clear typography, data visualization, corporate style', color: '#059669', icon: '📈' },
-  { id: 'style-history', name: 'History Documentary', description: 'Dramatic realistic historical scenes — like a high-budget documentary.', prompt_prefix: 'dramatic realistic historical scene, photorealistic painting, documentary style, detailed period accuracy,', prompt_suffix: ', cinematic composition, dramatic lighting, museum quality art', color: '#B45309', icon: '🏛️' },
-  { id: 'style-whiteboard', name: 'Whiteboard / Stickman', description: 'Simple whiteboard animation style with stick figures and hand-drawn elements.', prompt_prefix: 'whiteboard animation style, hand-drawn stick figures, simple black marker on white background,', prompt_suffix: ', clean simple illustration, educational style, minimalist sketch', color: '#0369A1', icon: '✏️' },
-  { id: 'style-science', name: 'Science Explainer', description: '3D renders and scientific visualizations for science and tech content.', prompt_prefix: 'highly detailed 3D render, scientific visualization, photorealistic CGI, educational science illustration,', prompt_suffix: ', studio lighting, sharp detail, educational diagram style', color: '#0891B2', icon: '🔬' },
+  { id: 'style-bible', name: 'Bible Animation', description: 'Cinematic painterly scenes from scripture — epic, reverent, full of light and depth.', prompt_prefix: 'cinematic painterly biblical scene, dramatic lighting, epic composition, high detail, oil painting style,', prompt_suffix: ', golden hour light, epic scale, reverent atmosphere, 16:9 widescreen', color: '#7C3AED', icon: '✝️', scene_pattern: '["image"]' },
+  { id: 'style-finance', name: 'Finance Explainer', description: 'Clean minimal infographics for financial and business content.', prompt_prefix: 'clean minimalist infographic illustration, flat design, professional business style,', prompt_suffix: ', white background, clear typography, data visualization, corporate style', color: '#059669', icon: '📈', scene_pattern: '["image","video"]' },
+  { id: 'style-history', name: 'History Documentary', description: 'Dramatic realistic historical scenes — like a high-budget documentary.', prompt_prefix: 'dramatic realistic historical scene, photorealistic painting, documentary style, detailed period accuracy,', prompt_suffix: ', cinematic composition, dramatic lighting, museum quality art', color: '#B45309', icon: '🏛️', scene_pattern: '["image"]' },
+  { id: 'style-whiteboard', name: 'Whiteboard / Stickman', description: 'Simple whiteboard animation style with stick figures and hand-drawn elements.', prompt_prefix: 'whiteboard animation style, hand-drawn stick figures, simple black marker on white background,', prompt_suffix: ', clean simple illustration, educational style, minimalist sketch', color: '#0369A1', icon: '✏️', scene_pattern: '["video"]' },
+  { id: 'style-science', name: 'Science Explainer', description: '3D renders and scientific visualizations for science and tech content.', prompt_prefix: 'highly detailed 3D render, scientific visualization, photorealistic CGI, educational science illustration,', prompt_suffix: ', studio lighting, sharp detail, educational diagram style', color: '#0891B2', icon: '🔬', scene_pattern: '["image","image","video"]' },
 ];
 
 function initDb() {
@@ -44,6 +44,7 @@ function initDb() {
       color TEXT DEFAULT '#6366F1',
       icon TEXT DEFAULT '🎬',
       is_default INTEGER DEFAULT 0,
+      scene_pattern TEXT DEFAULT '["image"]',
       created_by TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -84,6 +85,8 @@ function initDb() {
       duration_estimate INTEGER DEFAULT 0,
       assigned_to TEXT,
       notes TEXT,
+      started_at DATETIME,
+      completed_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id),
@@ -113,26 +116,42 @@ function initDb() {
     );
   `);
 
+  // Migrations for existing databases (add columns if missing)
+  const migrations = [
+    "ALTER TABLE projects ADD COLUMN started_at DATETIME",
+    "ALTER TABLE projects ADD COLUMN completed_at DATETIME",
+    "ALTER TABLE styles ADD COLUMN scene_pattern TEXT DEFAULT '[\"image\"]'",
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch {}
+  }
+
   // Seed users
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
   if (userCount.count === 0) {
     const insert = db.prepare('INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)');
     for (const u of [
       { id: 'user-dan', username: 'dan', password: 'dan123', name: 'Dan (Admin)', role: 'admin' },
-      { id: 'user-alice', username: 'alice', password: 'alice123', name: 'Alice', role: 'editor' },
-      { id: 'user-bob', username: 'bob', password: 'bob123', name: 'Bob', role: 'editor' },
+      { id: 'user-john', username: 'john', password: 'john123', name: 'John', role: 'editor' },
+      { id: 'user-christian', username: 'christian', password: 'christian123', name: 'Christian', role: 'editor' },
     ]) {
       insert.run(u.id, u.username, bcrypt.hashSync(u.password, 10), u.name, u.role);
     }
-    console.log('✅ Seeded users: dan/dan123, alice/alice123, bob/bob123');
+    console.log('✅ Seeded users: dan/dan123, john/john123, christian/christian123');
   }
 
   // Seed styles
   const styleCount = db.prepare('SELECT COUNT(*) as count FROM styles').get();
   if (styleCount.count === 0) {
-    const insert = db.prepare(`INSERT INTO styles (id, name, description, prompt_prefix, prompt_suffix, color, icon, is_default, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'user-dan')`);
-    for (const s of DEFAULT_STYLES) insert.run(s.id, s.name, s.description, s.prompt_prefix, s.prompt_suffix, s.color, s.icon);
+    const insert = db.prepare(`INSERT INTO styles (id, name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, is_default, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'user-dan')`);
+    for (const s of DEFAULT_STYLES) insert.run(s.id, s.name, s.description, s.prompt_prefix, s.prompt_suffix, s.color, s.icon, s.scene_pattern);
     console.log('✅ Seeded default styles');
+  } else {
+    // Update existing default styles with scene_pattern if not set
+    const updatePattern = db.prepare("UPDATE styles SET scene_pattern = ? WHERE id = ? AND (scene_pattern IS NULL OR scene_pattern = '[\"image\"]' OR scene_pattern = '')");
+    for (const s of DEFAULT_STYLES) {
+      updatePattern.run(s.scene_pattern, s.id);
+    }
   }
 
   console.log('✅ Database ready at', DB_PATH);

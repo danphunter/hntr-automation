@@ -5,8 +5,19 @@ import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Plus, Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Search, SortDesc,
+  Film, Search, Download, Image,
 } from 'lucide-react';
+
+function formatDuration(startIso, endIso) {
+  if (!startIso || !endIso) return null;
+  const ms = new Date(endIso) - new Date(startIso);
+  if (ms <= 0) return null;
+  const mins = Math.floor(ms / 60000);
+  const hrs = Math.floor(mins / 60);
+  if (hrs > 0) return `${hrs}h ${mins % 60}m`;
+  if (mins > 0) return `${mins}m`;
+  return `${Math.floor(ms / 1000)}s`;
+}
 
 const STATUS_META = {
   draft: { label: 'Draft', color: 'text-gray-400 bg-gray-800', icon: Clock },
@@ -115,32 +126,46 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(p => (
-            <Link
-              key={p.id}
-              to={`/projects/${p.id}`}
-              className="card p-4 flex items-center gap-4 hover:border-gray-700 hover:bg-gray-900/80 transition-all group block"
-            >
-              <div className="w-10 h-10 rounded-lg bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
-                <Film size={18} className="text-indigo-400" />
+          {filtered.map(p => {
+            const timeTaken = formatDuration(p.started_at, p.completed_at);
+            return (
+              <div key={p.id} className="card p-4 flex items-center gap-4 hover:border-gray-700 hover:bg-gray-900/80 transition-all group">
+                <Link to={`/projects/${p.id}`} className="flex items-center gap-4 flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-lg bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
+                    <Film size={18} className="text-indigo-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-gray-100 group-hover:text-white truncate">{p.title}</span>
+                      <StatusBadge status={p.status} />
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>{p.style_id ? p.style_id.replace('style-', '') : 'No style'}</span>
+                      <span>·</span>
+                      <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                      {p.image_count > 0 && (
+                        <><span>·</span><span className="flex items-center gap-1"><Image size={11} />{p.image_count} image{p.image_count !== 1 ? 's' : ''}</span></>
+                      )}
+                      {timeTaken && (
+                        <><span>·</span><span className="flex items-center gap-1 text-green-600"><Clock size={11} />{timeTaken}</span></>
+                      )}
+                      {p.notes && <><span>·</span><span className="truncate max-w-32">{p.notes}</span></>}
+                    </div>
+                  </div>
+                </Link>
+                {p.status === 'complete' && (
+                  <a
+                    href={api.downloadUrl(p.id)}
+                    onClick={e => e.stopPropagation()}
+                    className="flex-shrink-0 flex items-center gap-1.5 text-xs text-green-400 hover:text-green-300 bg-green-900/20 hover:bg-green-900/40 border border-green-900/40 px-3 py-1.5 rounded-lg transition-all"
+                    title="Download final video"
+                  >
+                    <Download size={13} /> Download
+                  </a>
+                )}
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-gray-100 group-hover:text-white truncate">{p.title}</span>
-                  <StatusBadge status={p.status} />
-                </div>
-                <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
-                  <span>{p.style_id ? p.style_id.replace('style-', '') : 'No style'}</span>
-                  <span>·</span>
-                  <span>{new Date(p.created_at).toLocaleDateString()}</span>
-                  {p.notes && <><span>·</span><span className="truncate">{p.notes}</span></>}
-                </div>
-              </div>
-              {p.status === 'complete' && (
-                <span className="text-xs text-green-400 flex-shrink-0">↓ Ready to download</span>
-              )}
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

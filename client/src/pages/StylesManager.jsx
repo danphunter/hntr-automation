@@ -1,9 +1,69 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import {
-  Plus, Edit2, Trash2, Upload, X, Save, Loader2,
-  Image, CheckCircle2, AlertCircle, Lock,
+  Plus, Edit2, Trash2, X, Save, Loader2,
+  Image, Lock, Film, Camera,
 } from 'lucide-react';
+
+function ScenePatternEditor({ pattern, onChange }) {
+  // pattern is an array like ["image", "video", "image"]
+  function toggleSlot(i) {
+    const next = [...pattern];
+    next[i] = next[i] === 'image' ? 'video' : 'image';
+    onChange(next);
+  }
+  function addSlot(type) { onChange([...pattern, type]); }
+  function removeSlot(i) {
+    const next = pattern.filter((_, idx) => idx !== i);
+    onChange(next.length ? next : ['image']);
+  }
+
+  const label = pattern.length === 1
+    ? (pattern[0] === 'image' ? 'All images (Ken Burns)' : 'All video clips')
+    : `Repeating: ${pattern.join(' → ')}`;
+
+  return (
+    <div>
+      <label className="label">Scene Pattern <span className="text-gray-600 font-normal">(repeats for all scenes)</span></label>
+      <div className="flex flex-wrap gap-2 mb-2">
+        {pattern.map((type, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => toggleSlot(i)}
+              className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+                type === 'image'
+                  ? 'bg-indigo-900/40 border-indigo-700 text-indigo-300 hover:bg-indigo-900/60'
+                  : 'bg-purple-900/40 border-purple-700 text-purple-300 hover:bg-purple-900/60'
+              }`}
+              title="Click to toggle image/video"
+            >
+              {type === 'image' ? <Camera size={11} /> : <Film size={11} />}
+              {type}
+            </button>
+            {pattern.length > 1 && (
+              <button type="button" onClick={() => removeSlot(i)} className="text-gray-700 hover:text-red-400">
+                <X size={10} />
+              </button>
+            )}
+          </div>
+        ))}
+        <button type="button" onClick={() => addSlot('image')} className="text-xs text-gray-600 hover:text-gray-400 border border-dashed border-gray-700 hover:border-gray-600 px-2 py-1 rounded-lg flex items-center gap-1">
+          <Plus size={10} /> image
+        </button>
+        <button type="button" onClick={() => addSlot('video')} className="text-xs text-gray-600 hover:text-gray-400 border border-dashed border-gray-700 hover:border-gray-600 px-2 py-1 rounded-lg flex items-center gap-1">
+          <Plus size={10} /> video
+        </button>
+      </div>
+      <p className="text-xs text-gray-600">{label}</p>
+    </div>
+  );
+}
+
+function parsePattern(raw) {
+  if (!raw) return ['image'];
+  try { const p = JSON.parse(raw); return Array.isArray(p) && p.length ? p : ['image']; } catch { return ['image']; }
+}
 
 function StyleModal({ style, onClose, onSaved }) {
   const isNew = !style;
@@ -14,6 +74,7 @@ function StyleModal({ style, onClose, onSaved }) {
     prompt_suffix: style?.prompt_suffix || '',
     color: style?.color || '#6366F1',
     icon: style?.icon || '🎬',
+    scene_pattern: parsePattern(style?.scene_pattern),
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -24,8 +85,9 @@ function StyleModal({ style, onClose, onSaved }) {
     e.preventDefault();
     setSaving(true); setError('');
     try {
-      if (isNew) await api.createStyle(form);
-      else await api.updateStyle(style.id, form);
+      const payload = { ...form, scene_pattern: JSON.stringify(form.scene_pattern) };
+      if (isNew) await api.createStyle(payload);
+      else await api.updateStyle(style.id, payload);
       onSaved();
       onClose();
     } catch (err) { setError(err.message); }
@@ -81,6 +143,11 @@ function StyleModal({ style, onClose, onSaved }) {
             <p className="text-gray-400 font-medium mb-1">Preview prompt structure:</p>
             <p className="text-gray-600">{form.prompt_prefix || '[prefix]'} <span className="text-indigo-400">[scene description]</span> {form.prompt_suffix || '[suffix]'}</p>
           </div>
+
+          <ScenePatternEditor
+            pattern={form.scene_pattern}
+            onChange={p => set('scene_pattern', p)}
+          />
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
@@ -207,6 +274,17 @@ export default function StylesManager() {
                   )}
                 </div>
                 <p className="text-sm text-gray-500 mt-0.5">{s.description}</p>
+                {s.scene_pattern && (() => {
+                  const p = parsePattern(s.scene_pattern);
+                  const summary = p.length === 1
+                    ? (p[0] === 'image' ? 'All images' : 'All video')
+                    : p.join(' → ') + ' (repeating)';
+                  return (
+                    <p className="text-xs text-gray-600 mt-1 flex items-center gap-1">
+                      <Film size={10} /> {summary}
+                    </p>
+                  );
+                })()}
                 <div className="flex items-center gap-2 mt-2">
                   <button
                     onClick={() => setEditingStyle(s)}

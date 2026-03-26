@@ -158,7 +158,7 @@ function buildVideo(jobId, scenePaths, audioPath, outputPath, db, projectId, out
       .on('end', () => {
         renderJobs.set(jobId, { status: 'complete', progress: 100, projectId, outputFilename });
         db.prepare(
-          'UPDATE projects SET status = ?, render_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          'UPDATE projects SET status = ?, render_path = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         ).run('complete', outputPath, projectId);
         resolve();
       })

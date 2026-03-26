@@ -189,14 +189,20 @@ export default function Settings() {
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
-        <Section title="Image Generation — OpenAI DALL-E">
-          <ApiKeyField label="OpenAI API Key" keyName="openai_api_key" values={values} onChange={onChange} hint="sk-..." />
-          <p className="text-xs text-gray-600">Used for image generation (DALL-E 3) and prompt auto-generation (GPT-4o mini). Fallback when Whisk tokens are exhausted.</p>
-        </Section>
-
         <Section title="Transcription — AssemblyAI">
           <ApiKeyField label="AssemblyAI API Key" keyName="assemblyai_api_key" values={values} onChange={onChange} hint="Your AssemblyAI key" />
-          <p className="text-xs text-gray-600">Used for audio transcription to auto-detect scene timings from voiceover. Optional — scenes can be timed manually.</p>
+          <p className="text-xs text-gray-500">
+            Used to analyze voiceover audio and break it into timed scenes automatically.{' '}
+            Get your free API key at{' '}
+            <a href="https://assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 underline">assemblyai.com</a>
+          </p>
+        </Section>
+
+        <Section title="Image Generation — DALL-E Fallback">
+          <ApiKeyField label="OpenAI API Key (optional)" keyName="openai_api_key" values={values} onChange={onChange} hint="sk-... (optional)" />
+          <p className="text-xs text-gray-500">
+            DALL-E 3 is used as a fallback if all Whisk tokens are exhausted. Whisk is the primary image generator — no key required for normal use.
+          </p>
         </Section>
 
         <button
