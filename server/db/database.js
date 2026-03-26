@@ -120,8 +120,17 @@ function initDb() {
   const migrations = [
     "ALTER TABLE projects ADD COLUMN started_at DATETIME",
     "ALTER TABLE projects ADD COLUMN completed_at DATETIME",
+    "ALTER TABLE projects ADD COLUMN style TEXT DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN script TEXT DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN notes TEXT DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN audio_path TEXT",
+    "ALTER TABLE projects ADD COLUMN audio_filename TEXT",
     "ALTER TABLE styles ADD COLUMN scene_pattern TEXT DEFAULT '[\"image\"]'",
     "ALTER TABLE style_references ADD COLUMN reference_type TEXT DEFAULT 'subject'",
+    "ALTER TABLE scenes ADD COLUMN image_url TEXT DEFAULT ''",
+    "ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0",
+    "ALTER TABLE scenes ADD COLUMN end_time REAL DEFAULT 5",
+    "ALTER TABLE scenes ADD COLUMN duration REAL DEFAULT 5",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
