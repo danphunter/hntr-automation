@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Download, Image, FolderPlus,
+  Film, Download, Image, FolderPlus, Plus,
 } from 'lucide-react';
 
 function formatDuration(startIso, endIso) {
@@ -50,88 +50,76 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  const thisWeek = projects.filter(p => {
-    const d = new Date(p.created_at);
-    return Date.now() - d.getTime() < 7 * 24 * 60 * 60 * 1000;
-  });
-  const completed = projects.filter(p => p.status === 'complete');
+  const completed = projects.filter(p => p.status === 'complete').length;
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">My Projects</h1>
-        <p className="text-gray-500 text-sm mt-1">Welcome back, {user?.displayName || user?.username}</p>
-      </div>
-
+    <div className="p-6 max-w-4xl mx-auto">
       <WhiskTokenBanner />
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Total Projects', value: projects.length, icon: Video, color: 'text-indigo-400' },
-          { label: 'This Week', value: thisWeek.length, icon: Clock, color: 'text-blue-400' },
-          { label: 'Completed', value: completed.length, icon: CheckCircle2, color: 'text-green-400' },
-        ].map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="card p-4">
-            <div className="flex items-center gap-3">
-              <div className={`${color} opacity-80`}><Icon size={20} /></div>
-              <div>
-                <div className="text-2xl font-bold text-white">{value}</div>
-                <div className="text-xs text-gray-500">{label}</div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* New Project button — centered and prominent */}
-      <div className="flex justify-center mb-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Projects</h1>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {loading ? 'Loading…' : `${projects.length} total · ${completed} completed`}
+          </p>
+        </div>
         <Link
           to="/projects/new"
-          className="flex items-center gap-3 px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-lg rounded-xl shadow-lg shadow-indigo-900/40 transition-all hover:scale-105 active:scale-100"
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm rounded-lg shadow-lg shadow-indigo-900/30 transition-all hover:scale-105 active:scale-100"
         >
-          <FolderPlus size={24} />
+          <Plus size={16} />
           New Project
         </Link>
       </div>
 
       {/* Project list */}
       {loading ? (
-        <div className="text-center py-16 text-gray-600">
-          <Loader2 size={32} className="animate-spin mx-auto mb-3" />
-          Loading projects…
+        <div className="flex flex-col items-center justify-center py-24 text-gray-600">
+          <Loader2 size={28} className="animate-spin mb-3" />
+          <span className="text-sm">Loading projects…</span>
         </div>
       ) : projects.length === 0 ? (
-        <div className="card p-12 text-center">
-          <Video size={40} className="text-gray-700 mx-auto mb-4" />
-          <p className="text-gray-400 font-medium">No projects yet — click New Project to get started</p>
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-gray-900 border border-gray-800 flex items-center justify-center mb-4">
+            <FolderPlus size={28} className="text-gray-600" />
+          </div>
+          <p className="text-gray-400 font-medium mb-1">No projects yet</p>
+          <p className="text-gray-600 text-sm mb-6">Create your first video project to get started</p>
+          <Link
+            to="/projects/new"
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm rounded-lg transition-all"
+          >
+            <Plus size={16} />
+            New Project
+          </Link>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {projects.map(p => {
             const timeTaken = formatDuration(p.started_at, p.completed_at);
             return (
-              <div key={p.id} className="card p-4 flex items-center gap-4 hover:border-gray-700 hover:bg-gray-900/80 transition-all group">
+              <div key={p.id} className="group flex items-center gap-4 p-4 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-900/80 transition-all">
                 <Link to={`/projects/${p.id}`} className="flex items-center gap-4 flex-1 min-w-0">
-                  <div className="w-10 h-10 rounded-lg bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
-                    <Film size={18} className="text-indigo-400" />
+                  <div className="w-9 h-9 rounded-lg bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
+                    <Film size={16} className="text-indigo-400" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-gray-100 group-hover:text-white truncate">{p.title}</span>
+                      <span className="font-medium text-gray-100 group-hover:text-white truncate">{p.title}</span>
                       <StatusBadge status={p.status} />
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
-                      <span>{p.style_id ? p.style_id.replace('style-', '') : 'No style'}</span>
-                      <span>·</span>
                       <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                      {p.style_id && (
+                        <><span>·</span><span>{p.style_id.replace('style-', '')}</span></>
+                      )}
                       {p.image_count > 0 && (
-                        <><span>·</span><span className="flex items-center gap-1"><Image size={11} />{p.image_count} image{p.image_count !== 1 ? 's' : ''}</span></>
+                        <><span>·</span><span className="flex items-center gap-1"><Image size={10} />{p.image_count}</span></>
                       )}
                       {timeTaken && (
-                        <><span>·</span><span className="flex items-center gap-1 text-green-600"><Clock size={11} />{timeTaken}</span></>
+                        <><span>·</span><span className="flex items-center gap-1 text-green-600"><Clock size={10} />{timeTaken}</span></>
                       )}
-                      {p.notes && <><span>·</span><span className="truncate max-w-32">{p.notes}</span></>}
                     </div>
                   </div>
                 </Link>
