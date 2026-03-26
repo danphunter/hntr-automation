@@ -59,12 +59,27 @@ async function generateViaWhisk(token, prompt, subjectRefs, styleRefImages) {
     outputFormat: 'JPEG',
   };
 
-  const res = await fetch('https://whisk.withgoogle.com/api/v1/images:generate', {
+  const res = await fetch('https://aisandbox-pa.googleapis.com/v1/whisk:generateImage', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      'User-Agent': 'Mozilla/5.0 (compatible)',
+      'accept': '*/*',
+      'accept-language': 'en-US,en;q=0.9',
+      'authorization': 'Bearer ' + token,
+      'content-type': 'text/plain;charset=UTF-8',
+      'origin': 'https://labs.google',
+      'referer': 'https://labs.google/',
+      'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'cross-site',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      'x-browser-channel': 'stable',
+      'x-browser-copyright': 'Copyright 2026 Google LLC. All rights reserved.',
+      'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
+      'x-browser-year': '2026',
+      'x-client-data': 'CPyUywE=',
     },
     body: JSON.stringify(body),
   });
