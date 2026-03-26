@@ -40,7 +40,6 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Dat
 
 // Serve React frontend in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
-const fs = require('fs');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
   app.get('*', (req, res) => {
