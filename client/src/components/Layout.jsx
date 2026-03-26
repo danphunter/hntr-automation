@@ -54,24 +54,20 @@ export default function Layout() {
 
         {/* Nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          <NavItem to="/dashboard" icon={LayoutDashboard} label="My Projects" end />
+          <NavItem to="/projects/new" icon={FolderPlus} label="New Project" />
+        </nav>
+
+        {/* Bottom section: admin links + user */}
+        <div className="p-3 border-t border-gray-800 space-y-1">
           {isAdmin && (
             <>
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider px-3 py-2">Admin</p>
               <NavItem to="/admin" icon={ShieldCheck} label="Admin Dashboard" end />
               <NavItem to="/styles" icon={Palette} label="Styles & Templates" />
               <NavItem to="/settings" icon={Settings} label="Settings" />
               <div className="border-t border-gray-800 my-2" />
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider px-3 py-2">Workspace</p>
             </>
           )}
-          {!isAdmin && (
-            <NavItem to="/dashboard" icon={LayoutDashboard} label="My Projects" />
-          )}
-          <NavItem to="/projects/new" icon={FolderPlus} label="New Project" />
-        </nav>
-
-        {/* User */}
-        <div className="p-3 border-t border-gray-800">
           <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-800/50">
             <div className="w-8 h-8 rounded-full bg-indigo-700 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">
               {user?.displayName?.[0] || user?.username?.[0] || 'U'}

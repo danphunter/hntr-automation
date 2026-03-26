@@ -44,6 +44,8 @@ function markWhiskRateLimited(db, tokenId, errMsg) {
 async function generateViaWhisk(token, prompt, subjectRefs, styleRefImages) {
   const fetch = (await import('node-fetch')).default;
 
+  console.log('Using Whisk token (first 20 chars):', token.substring(0, 20));
+
   // Whisk uses Google's Imagen API via the whisk.withgoogle.com backend
   const body = {
     prompt,
@@ -69,11 +71,13 @@ async function generateViaWhisk(token, prompt, subjectRefs, styleRefImages) {
 
   if (res.status === 429 || res.status === 403) {
     const text = await res.text();
+    console.log('Whisk response:', res.status, text.slice(0, 500));
     throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
   }
 
   if (!res.ok) {
     const text = await res.text();
+    console.log('Whisk response:', res.status, text.slice(0, 500));
     throw new Error(`WHISK_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
 
@@ -206,7 +210,9 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 
   if (!apiKey) {
     const updated = scenes.map(scene => {
-      const prompt = `${styleContext ? styleContext + '. ' : ''}Visual scene showing: ${scene.text.slice(0, 150)}`;
+      const visualBase = scene.text.slice(0, 150).replace(/["""'']/g, '');
+      const stylePrefix = styleContext ? `${styleContext}. ` : '';
+      const prompt = `${stylePrefix}A cinematic scene depicting: ${visualBase}. Dramatic lighting, high quality, film still, wide angle shot.`;
       db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
       return { id: scene.id, image_prompt: prompt };
     });
@@ -256,10 +262,13 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
   const { label, token } = req.body;
   if (!label || !token) return res.status(400).json({ error: 'label and token required' });
 
+  // Trim whitespace and strip any "Bearer " prefix the user may have pasted
+  const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
+
   const db = getDb();
   const id = uuidv4();
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM whisk_tokens').get().m;
-  db.prepare('INSERT INTO whisk_tokens (id, label, token, sort_order) VALUES (?, ?, ?, ?)').run(id, label, token, maxOrder + 1);
+  db.prepare('INSERT INTO whisk_tokens (id, label, token, sort_order) VALUES (?, ?, ?, ?)').run(id, label, cleanToken, maxOrder + 1);
   res.status(201).json({ id, label, usage_count: 0, status: 'active', sort_order: maxOrder + 1 });
 });
 
@@ -267,8 +276,10 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
 router.put('/whisk-tokens/:id', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
-  const { label, token, status } = req.body;
-  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status) WHERE id = ?').run(label, token, status, req.params.id);
+  const { label, status } = req.body;
+  // Trim and strip "Bearer " prefix if a new token value was provided
+  const cleanToken = req.body.token ? req.body.token.trim().replace(/^Bearer\s+/i, '') : undefined;
+  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status) WHERE id = ?').run(label, cleanToken, status, req.params.id);
   const t = db.prepare('SELECT id, label, usage_count, status, last_used, last_error, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
   res.json(t);
 });

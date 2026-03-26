@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Plus, Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Search, Download, Image,
+  Film, Search, Download, Image, FolderPlus,
 } from 'lucide-react';
 
 function formatDuration(startIso, endIso) {
@@ -113,17 +113,25 @@ export default function Dashboard() {
           Loading projects…
         </div>
       ) : filtered.length === 0 ? (
-        <div className="card p-12 text-center">
-          <Video size={40} className="text-gray-700 mx-auto mb-4" />
-          <p className="text-gray-400 font-medium">
-            {search ? 'No projects match your search' : 'No projects yet'}
-          </p>
-          {!search && (
-            <Link to="/projects/new" className="btn-primary inline-flex items-center gap-2 mt-4">
-              <Plus size={16} /> Create your first project
+        search ? (
+          <div className="card p-12 text-center">
+            <Video size={40} className="text-gray-700 mx-auto mb-4" />
+            <p className="text-gray-400 font-medium">No projects match your search</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-32">
+            <Link
+              to="/projects/new"
+              className="flex flex-col items-center gap-4 group hover:opacity-90 transition-opacity"
+            >
+              <div className="w-24 h-24 rounded-2xl bg-indigo-600/20 border-2 border-dashed border-indigo-600/40 group-hover:border-indigo-500 group-hover:bg-indigo-600/30 flex items-center justify-center transition-all">
+                <FolderPlus size={40} className="text-indigo-400 group-hover:text-indigo-300" />
+              </div>
+              <span className="text-lg font-semibold text-gray-300 group-hover:text-white">New Project</span>
+              <span className="text-sm text-gray-600">Click to create your first video project</span>
             </Link>
-          )}
-        </div>
+          </div>
+        )
       ) : (
         <div className="space-y-3">
           {filtered.map(p => {

@@ -32,6 +32,12 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
   if (!scenes.length) return res.status(400).json({ error: 'No scenes found' });
 
+  // Require at least 1 scene with a generated image before starting FFmpeg
+  const scenesWithImages = scenes.filter(s => s.image_url);
+  if (scenesWithImages.length === 0) {
+    return res.status(400).json({ error: 'No images generated yet — generate images for your scenes before rendering' });
+  }
+
   const audioPath = project.audio_path;
   if (!audioPath || !fs.existsSync(audioPath)) {
     return res.status(400).json({ error: 'No audio file uploaded' });
