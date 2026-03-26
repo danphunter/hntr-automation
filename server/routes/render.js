@@ -76,49 +76,26 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   fs.mkdirSync(tmpDir, { recursive: true });
 
   try {
-    // Download/copy images for each scene, prepare local paths
+    // Phase 1: Prepare local image paths
     const scenePaths = [];
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
       let imgPath = scene.image_path;
-
       if (!imgPath || !fs.existsSync(imgPath)) {
-        // Use placeholder image (colored rectangle with text for demo)
         imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
       }
-
       scenePaths.push({ path: imgPath, duration: Math.max(scene.duration || 5, 1) });
-      renderJobs.get(jobId).progress = Math.round((i / scenes.length) * 30);
+      renderJobs.get(jobId).progress = Math.round((i / scenes.length) * 10);
     }
 
-    // Build ffmpeg command
-    await buildVideo(jobId, scenePaths, audioPath, outputPath, db, project.id, outputFilename);
-  } finally {
-    // Cleanup tmp
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-  }
-}
-
-function buildVideo(jobId, scenePaths, audioPath, outputPath, db, projectId, outputFilename) {
-  return new Promise((resolve, reject) => {
-    // Build filter complex for Ken Burns + concat
-    const filterParts = [];
-    const concatInputs = [];
+    // Phase 2: Encode each scene into its own clip (one at a time to stay within memory limits)
     const FPS = 25;
+    const clipPaths = [];
 
-    let cmd = ffmpeg();
-
-    // Add all image inputs
     for (let i = 0; i < scenePaths.length; i++) {
-      cmd = cmd.input(scenePaths[i].path);
-    }
+      const { path: imgPath, duration: dur } = scenePaths[i];
+      const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
-    // Add audio
-    cmd = cmd.input(audioPath);
-
-    // Build filter complex
-    for (let i = 0; i < scenePaths.length; i++) {
-      const dur = scenePaths[i].duration;
       const frames = Math.ceil(dur * FPS);
       const zoomDir = i % 2 === 0 ? 'in' : 'out';
       const startZoom = zoomDir === 'in' ? 1.0 : 1.3;
@@ -128,53 +105,116 @@ function buildVideo(jobId, scenePaths, audioPath, outputPath, db, projectId, out
         ? `min(zoom+${zoomStep.toFixed(6)},${endZoom})`
         : `max(zoom-${Math.abs(zoomStep).toFixed(6)},${endZoom})`;
 
-      // Process zoompan at 1280x720 to reduce memory, scale up to 1920x1080 after
-      filterParts.push(
-        `[${i}:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,` +
+      // zoompan at 1280x720 (lower memory), then scale to 1920x1080
+      const filter =
+        `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,` +
         `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1280x720:fps=${FPS},` +
-        `scale=1920:1080,setpts=PTS-STARTPTS[v${i}]`
-      );
-      concatInputs.push(`[v${i}]`);
+        `scale=1920:1080,setpts=PTS-STARTPTS`;
+
+      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur}s, ${frames} frames)...`);
+
+      try {
+        await renderSceneClip(imgPath, clipPath, filter, dur);
+        clipPaths.push(clipPath);
+        console.log(`[render ${jobId}] Scene ${i + 1} complete.`);
+      } catch (err) {
+        console.error(`[render ${jobId}] Scene ${i + 1} failed, skipping:`, err.message);
+      }
+
+      renderJobs.get(jobId).progress = Math.round(10 + ((i + 1) / scenePaths.length) * 70);
     }
 
-    const filterComplex =
-      filterParts.join('; ') +
-      `; ${concatInputs.join('')}concat=n=${scenePaths.length}:v=1:a=0[outv]`;
+    if (clipPaths.length === 0) {
+      throw new Error('All scenes failed to encode — no clips to assemble');
+    }
 
-    renderJobs.get(jobId).progress = 40;
+    // Phase 3: Write concat list and join clips (stream copy — nearly instant, no memory spike)
+    const concatFile = path.join(tmpDir, 'concat.txt');
+    fs.writeFileSync(
+      concatFile,
+      clipPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n')
+    );
 
-    cmd
-      .complexFilter(filterComplex)
+    console.log(`[render ${jobId}] Concatenating ${clipPaths.length} clips via concat demuxer...`);
+    renderJobs.get(jobId).progress = 85;
+
+    const videoOnlyPath = path.join(tmpDir, 'video_only.mp4');
+    await concatClips(concatFile, videoOnlyPath);
+
+    // Phase 4: Mux audio into final output
+    console.log(`[render ${jobId}] Muxing audio...`);
+    renderJobs.get(jobId).progress = 93;
+
+    await muxAudio(videoOnlyPath, audioPath, outputPath);
+
+    console.log(`[render ${jobId}] Render complete -> ${outputPath}`);
+    renderJobs.set(jobId, { status: 'complete', progress: 100, projectId: project.id, outputFilename });
+    db.prepare(
+      'UPDATE projects SET status = ?, render_path = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run('complete', outputPath, project.id);
+
+  } finally {
+    // Clean up tmp dir (includes individual scene clips)
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// Encode a single image into a video clip with Ken Burns zoom
+function renderSceneClip(imgPath, clipPath, filter, duration) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(imgPath)
+      .inputOptions(['-loop 1'])
+      .videoFilter(filter)
       .outputOptions([
-        '-map [outv]',
-        `-map ${scenePaths.length}:a`,
-        '-c:v libx264',
-        '-preset ultrafast',   // lowest memory usage; quality loss acceptable for drafts
-        '-crf 26',             // slightly lower quality to reduce encode buffer size
-        '-threads 1',          // single-threaded to stay within Railway's memory limits
-        '-bufsize 2M',         // cap encoder output buffer
-        '-maxrate 4M',         // cap peak bitrate
-        '-c:a aac',
-        '-b:a 128k',           // reduced from 192k to save memory
+        '-t', String(duration),
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '26',
+        '-threads', '1',
+        '-bufsize', '2M',
+        '-maxrate', '4M',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+      ])
+      .output(clipPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+}
+
+// Join clip files using concat demuxer (stream copy — no re-encode, minimal memory)
+function concatClips(concatFile, videoOnlyPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(concatFile)
+      .inputOptions(['-f', 'concat', '-safe', '0'])
+      .outputOptions(['-c', 'copy', '-threads', '1'])
+      .output(videoOnlyPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+}
+
+// Mux video + audio into the final output file
+function muxAudio(videoOnlyPath, audioPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoOnlyPath)
+      .input(audioPath)
+      .outputOptions([
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '128k',
         '-shortest',
-        '-movflags +faststart',
-        '-pix_fmt yuv420p',
+        '-movflags', '+faststart',
+        '-threads', '1',
       ])
       .output(outputPath)
-      .on('progress', (progress) => {
-        const pct = Math.min(90, 40 + Math.round((progress.percent || 0) * 0.5));
-        if (renderJobs.has(jobId)) renderJobs.get(jobId).progress = pct;
-      })
-      .on('end', () => {
-        renderJobs.set(jobId, { status: 'complete', progress: 100, projectId, outputFilename });
-        db.prepare(
-          'UPDATE projects SET status = ?, render_path = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).run('complete', outputPath, projectId);
-        resolve();
-      })
-      .on('error', (err) => {
-        reject(err);
-      })
+      .on('end', resolve)
+      .on('error', reject)
       .run();
   });
 }
