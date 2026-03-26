@@ -9,7 +9,7 @@ export default function NewProject() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [styles, setStyles] = useState([]);
-  const [form, setForm] = useState({ title: '', style_id: '', notes: '' });
+  const [form, setForm] = useState({ title: '', style_id: '' });
   const [audioFile, setAudioFile] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -99,10 +99,6 @@ export default function NewProject() {
                   </button>
                 ))}
               </div>
-            </div>
-            <div>
-              <label className="label">Notes (optional)</label>
-              <input className="input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Any special instructions or context…" />
             </div>
           </div>
         )}
