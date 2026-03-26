@@ -128,10 +128,11 @@ function buildVideo(jobId, scenePaths, audioPath, outputPath, db, projectId, out
         ? `min(zoom+${zoomStep.toFixed(6)},${endZoom})`
         : `max(zoom-${Math.abs(zoomStep).toFixed(6)},${endZoom})`;
 
+      // Process zoompan at 1280x720 to reduce memory, scale up to 1920x1080 after
       filterParts.push(
-        `[${i}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
-        `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1920x1080:fps=${FPS},` +
-        `setpts=PTS-STARTPTS[v${i}]`
+        `[${i}:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,` +
+        `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1280x720:fps=${FPS},` +
+        `scale=1920:1080,setpts=PTS-STARTPTS[v${i}]`
       );
       concatInputs.push(`[v${i}]`);
     }
@@ -148,10 +149,13 @@ function buildVideo(jobId, scenePaths, audioPath, outputPath, db, projectId, out
         '-map [outv]',
         `-map ${scenePaths.length}:a`,
         '-c:v libx264',
-        '-preset fast',
-        '-crf 22',
+        '-preset ultrafast',   // lowest memory usage; quality loss acceptable for drafts
+        '-crf 26',             // slightly lower quality to reduce encode buffer size
+        '-threads 1',          // single-threaded to stay within Railway's memory limits
+        '-bufsize 2M',         // cap encoder output buffer
+        '-maxrate 4M',         // cap peak bitrate
         '-c:a aac',
-        '-b:a 192k',
+        '-b:a 128k',           // reduced from 192k to save memory
         '-shortest',
         '-movflags +faststart',
         '-pix_fmt yuv420p',

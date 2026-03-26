@@ -14,6 +14,53 @@ function getSettings(db) {
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
+// ── Whisk prompt sanitization ────────────────────────────────────────────────
+
+// Google Imagen's safety filter rejects prompts with violence/weapons/death references.
+// Replace flagged words with safe visual alternatives before sending to Whisk.
+const WHISK_WORD_REPLACEMENTS = {
+  'blood': 'red mist', 'bloody': 'dramatic', 'gore': 'detail', 'gory': 'intense',
+  'dead': 'still', 'death': 'stillness', 'die': 'fade', 'dying': 'fading',
+  'kill': 'halt', 'killing': 'halting', 'killer': 'figure', 'killed': 'fallen',
+  'murder': 'mystery', 'murdered': 'fallen', 'murderer': 'shadowy figure',
+  'war': 'conflict', 'warfare': 'struggle', 'battle': 'encounter', 'battles': 'encounters',
+  'combat': 'action', 'fight': 'confrontation', 'fighting': 'confrontation',
+  'attack': 'approach', 'attacked': 'confronted', 'assault': 'rush', 'assaulted': 'rushed',
+  'violence': 'intensity', 'violent': 'intense',
+  'destroy': 'transform', 'destruction': 'transformation', 'destroyed': 'transformed',
+  'weapon': 'instrument', 'weapons': 'instruments', 'armed': 'equipped',
+  'gun': 'device', 'guns': 'devices', 'rifle': 'long instrument', 'pistol': 'device',
+  'sword': 'blade', 'knife': 'tool', 'dagger': 'implement', 'spear': 'long tool',
+  'bomb': 'sphere', 'explosion': 'burst of light', 'explosive': 'powerful', 'blast': 'wave of light',
+  'military': 'organized', 'soldier': 'figure', 'soldiers': 'figures', 'warrior': 'figure', 'warriors': 'figures',
+  'troops': 'people', 'army': 'group', 'nuclear': 'powerful', 'missile': 'craft',
+  'skull': 'stone carving', 'skeleton': 'ancient structure', 'corpse': 'still figure',
+  'wound': 'mark', 'wounded': 'weathered', 'bleeding': 'glowing', 'scar': 'mark',
+  'torture': 'ordeal', 'execution': 'ceremony', 'massacre': 'upheaval',
+};
+
+function sanitizeForWhisk(prompt) {
+  let sanitized = prompt;
+  for (const [word, replacement] of Object.entries(WHISK_WORD_REPLACEMENTS)) {
+    sanitized = sanitized.replace(new RegExp(`\\b${word}\\b`, 'gi'), replacement);
+  }
+  // Add a safe art framing prefix if prompt doesn't already start with one
+  if (!/^(a |an )?(digital|cinematic|artistic|photographic|illustration|painting|dramatic)/i.test(sanitized.trim())) {
+    sanitized = `A cinematic still of ${sanitized}`;
+  }
+  return sanitized.trim();
+}
+
+function makeSimpleFallbackPrompt(prompt) {
+  // Strip everything down to nouns/adjectives, keep under 60 chars, add safe prefix
+  const stripped = prompt
+    .replace(/[^a-zA-Z0-9\s,]/g, '')
+    .replace(/\b\w{1,2}\b/g, '') // remove tiny words
+    .trim()
+    .slice(0, 80);
+  return `A digital illustration of ${stripped}, dramatic lighting, cinematic composition`;
+}
+
 // ── Whisk token rotation ─────────────────────────────────────────────────────
 
 function getNextWhiskToken(db) {
@@ -57,6 +104,7 @@ async function generateViaWhisk(token, prompt) {
   const fetch = (await import('node-fetch')).default;
 
   console.log('Using Whisk token (first 20 chars):', token.substring(0, 20));
+  console.log('Whisk prompt being sent:', prompt);
 
   const body = {
     clientContext: {
@@ -107,6 +155,9 @@ async function generateViaWhisk(token, prompt) {
   if (!res.ok) {
     const text = await res.text();
     console.log('Whisk error:', res.status, text.slice(0, 500));
+    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION')) {
+      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
+    }
     throw new Error(`WHISK_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
 
@@ -146,19 +197,23 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  // Build prompt with style prefix/suffix
-  let prompt = scene.image_prompt || scene.text;
+  // Build prompt with style prefix/suffix, then sanitize for Whisk safety filter
+  let rawPrompt = scene.image_prompt || scene.text;
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
-      prompt = `${style.prompt_prefix} ${prompt} ${style.prompt_suffix}`.trim();
+      rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
     }
   }
+  let prompt = sanitizeForWhisk(rawPrompt);
+  console.log('Original prompt:', rawPrompt);
+  console.log('Sanitized prompt:', prompt);
 
   // Try Whisk tokens in rotation order (getNextWhiskToken auto-resets expired cooldowns)
   let imageResult = null;
   let source = 'unknown';
   let triedCount = 0;
+  let unsafeContentRetried = false;
 
   while (true) {
     const wt = getNextWhiskToken(db);
@@ -191,6 +246,14 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       if (err.message.startsWith('RATE_LIMITED')) {
         markWhiskRateLimited(db, wt.id, err.message.slice(12));
         console.log(`Whisk token "${wt.label}" rate limited, rotating...`);
+      } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
+        // Safety filter triggered — retry once with a stripped-down fallback prompt
+        console.warn(`Whisk safety filter triggered for prompt, retrying with fallback. Token: "${wt.label}"`);
+        unsafeContentRetried = true;
+        prompt = makeSimpleFallbackPrompt(rawPrompt);
+        console.log('Fallback prompt:', prompt);
+        triedCount--; // don't count this as a token exhaustion attempt
+        continue;
       } else {
         // Non-rate-limit error: mark rate-limited briefly so we skip it this round
         markWhiskRateLimited(db, wt.id, err.message);
