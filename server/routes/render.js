@@ -15,6 +15,114 @@ if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 // Track active render jobs
 const renderJobs = new Map();
 
+// Track batch jobs
+const batchJobs = new Map();
+
+// POST /api/render/batch — queue multiple projects for sequential rendering
+router.post('/batch', authMiddleware, async (req, res) => {
+  const { projectIds } = req.body;
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return res.status(400).json({ error: 'projectIds must be a non-empty array' });
+  }
+
+  const db = getDb();
+  const batchId = uuidv4();
+  batchJobs.set(batchId, {
+    status: 'processing',
+    total: projectIds.length,
+    completed: 0,
+    failed: 0,
+    currentIndex: 0,
+    currentProjectId: null,
+    currentProjectTitle: null,
+    projects: projectIds.map(id => ({ id, status: 'waiting', jobId: null, error: null })),
+  });
+
+  res.json({ batchId, message: 'Batch render started' });
+
+  runBatch(batchId, projectIds, db).catch(err => {
+    console.error('Batch render failed:', err);
+    const batch = batchJobs.get(batchId);
+    if (batch) batch.status = 'complete';
+  });
+});
+
+// GET /api/render/batch/:batchId — batch status
+router.get('/batch/:batchId', authMiddleware, (req, res) => {
+  const batch = batchJobs.get(req.params.batchId);
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+  res.json(batch);
+});
+
+async function runBatch(batchId, projectIds, db) {
+  const batch = batchJobs.get(batchId);
+
+  for (let i = 0; i < projectIds.length; i++) {
+    const projectId = projectIds[i];
+    batch.currentIndex = i + 1;
+    batch.currentProjectId = projectId;
+
+    const project = db.prepare(`
+      SELECT p.*, s.prompt_prefix, s.prompt_suffix, s.name as style_name
+      FROM projects p LEFT JOIN styles s ON s.id = p.style_id
+      WHERE p.id = ?
+    `).get(projectId);
+
+    if (!project) {
+      batch.projects[i].status = 'failed';
+      batch.projects[i].error = 'Project not found';
+      batch.failed++;
+      continue;
+    }
+
+    batch.currentProjectTitle = project.title;
+
+    const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(projectId);
+    const audioPath = project.audio_path;
+
+    if (!scenes.length) {
+      batch.projects[i].status = 'failed';
+      batch.projects[i].error = 'No scenes found';
+      batch.failed++;
+      continue;
+    }
+
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      batch.projects[i].status = 'failed';
+      batch.projects[i].error = 'No audio file uploaded';
+      batch.failed++;
+      continue;
+    }
+
+    const jobId = uuidv4();
+    const outputFilename = `render-${project.id}-${Date.now()}.mp4`;
+    const outputPath = path.join(RENDERS_DIR, outputFilename);
+
+    db.prepare("UPDATE projects SET status = 'rendering', render_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(projectId);
+
+    renderJobs.set(jobId, { status: 'processing', progress: 0, projectId });
+    batch.projects[i].status = 'rendering';
+    batch.projects[i].jobId = jobId;
+
+    try {
+      await runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db);
+      batch.projects[i].status = 'done';
+      batch.completed++;
+    } catch (err) {
+      renderJobs.set(jobId, { status: 'error', error: err.message, projectId });
+      db.prepare("UPDATE projects SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(projectId);
+      batch.projects[i].status = 'failed';
+      batch.projects[i].error = err.message;
+      batch.failed++;
+    }
+  }
+
+  batch.status = 'complete';
+  batch.currentProjectId = null;
+  batch.currentProjectTitle = null;
+}
+
 // POST /api/render/:projectId — start rendering
 router.post('/:projectId', authMiddleware, async (req, res) => {
   const db = getDb();
@@ -102,9 +210,13 @@ function buildVideo(jobId, scenePaths, audioPath, outputPath, db, projectId, out
 
     let cmd = ffmpeg();
 
-    // Add all image inputs
+    // Add all scene inputs; strip audio from any video files (Veo clips etc.)
+    const VIDEO_EXTS = /\.(mp4|webm|mov|avi|mkv|m4v)$/i;
     for (let i = 0; i < scenePaths.length; i++) {
       cmd = cmd.input(scenePaths[i].path);
+      if (VIDEO_EXTS.test(scenePaths[i].path)) {
+        cmd = cmd.inputOptions(['-an']);
+      }
     }
 
     // Add audio

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Plus, Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Search, Download, Image,
+  Film, Search, Download, Image, ListVideo, X,
 } from 'lucide-react';
 
 function formatDuration(startIso, endIso) {
@@ -27,6 +27,13 @@ const STATUS_META = {
   error: { label: 'Error', color: 'text-red-400 bg-red-900/30', icon: AlertCircle },
 };
 
+const BATCH_PROJECT_STATUS = {
+  waiting: { label: 'Waiting', color: 'text-gray-400' },
+  rendering: { label: 'Rendering…', color: 'text-yellow-400' },
+  done: { label: 'Done', color: 'text-green-400' },
+  failed: { label: 'Failed', color: 'text-red-400' },
+};
+
 function StatusBadge({ status }) {
   const meta = STATUS_META[status] || STATUS_META.draft;
   const Icon = meta.icon;
@@ -43,6 +50,13 @@ export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState(new Set());
+  const [batchId, setBatchId] = useState(null);
+  const [batchStatus, setBatchStatus] = useState(null);
+
+  const refreshProjects = useCallback(() => {
+    api.getProjects().then(setProjects).catch(console.error);
+  }, []);
 
   useEffect(() => {
     api.getProjects()
@@ -50,6 +64,22 @@ export default function Dashboard() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  // Poll batch status
+  useEffect(() => {
+    if (!batchId) return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await api.getBatchStatus(batchId);
+        setBatchStatus(status);
+        if (status.status === 'complete') {
+          clearInterval(interval);
+          refreshProjects();
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [batchId, refreshProjects]);
 
   const thisWeek = projects.filter(p => {
     const d = new Date(p.created_at);
@@ -61,6 +91,38 @@ export default function Dashboard() {
     p.title.toLowerCase().includes(search.toLowerCase()) ||
     (p.notes || '').toLowerCase().includes(search.toLowerCase())
   );
+
+  function isBatchEligible(p) {
+    return p.status === 'draft' && p.image_count > 0;
+  }
+
+  function toggleSelect(id) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function startBatch() {
+    const ids = [...selected];
+    try {
+      const { batchId: id } = await api.startBatchRender(ids);
+      setBatchId(id);
+      setBatchStatus(null);
+      setSelected(new Set());
+    } catch (err) {
+      alert('Failed to start batch: ' + err.message);
+    }
+  }
+
+  function dismissBatch() {
+    setBatchId(null);
+    setBatchStatus(null);
+  }
+
+  const batchRunning = batchStatus && batchStatus.status === 'processing';
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -90,6 +152,43 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* Batch status panel */}
+      {batchStatus && (
+        <div className="card p-4 mb-4 border-yellow-800/40">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2">
+                {batchRunning
+                  ? <Loader2 size={15} className="animate-spin text-yellow-400" />
+                  : <CheckCircle2 size={15} className="text-green-400" />}
+                <span className="text-sm font-medium text-white">
+                  {batchRunning
+                    ? `Rendering ${batchStatus.currentIndex}/${batchStatus.total}${batchStatus.currentProjectTitle ? ` — ${batchStatus.currentProjectTitle}` : ''}`
+                    : `Batch complete — ${batchStatus.completed} done, ${batchStatus.failed} failed`}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {batchStatus.projects.map((p, i) => {
+                  const proj = projects.find(x => x.id === p.id);
+                  const meta = BATCH_PROJECT_STATUS[p.status] || BATCH_PROJECT_STATUS.waiting;
+                  return (
+                    <span key={p.id} className={`text-xs ${meta.color} bg-gray-800 px-2 py-0.5 rounded`}>
+                      {proj?.title || `Project ${p.id}`}: {meta.label}
+                      {p.error && <span className="text-red-400 ml-1">({p.error})</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+            {!batchRunning && (
+              <button onClick={dismissBatch} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header row */}
       <div className="flex items-center gap-3 mb-4">
         <div className="relative flex-1">
@@ -101,6 +200,14 @@ export default function Dashboard() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+        {selected.size > 0 && (
+          <button
+            onClick={startBatch}
+            className="btn-primary flex items-center gap-2 whitespace-nowrap bg-yellow-600 hover:bg-yellow-500"
+          >
+            <ListVideo size={16} /> Batch Render ({selected.size})
+          </button>
+        )}
         <Link to="/projects/new" className="btn-primary flex items-center gap-2 whitespace-nowrap">
           <Plus size={16} /> New Project
         </Link>
@@ -128,8 +235,27 @@ export default function Dashboard() {
         <div className="space-y-3">
           {filtered.map(p => {
             const timeTaken = formatDuration(p.started_at, p.completed_at);
+            const eligible = isBatchEligible(p);
+            const isSelected = selected.has(p.id);
+            const batchProjectStatus = batchStatus?.projects.find(x => x.id === p.id);
             return (
-              <div key={p.id} className="card p-4 flex items-center gap-4 hover:border-gray-700 hover:bg-gray-900/80 transition-all group">
+              <div
+                key={p.id}
+                className={`card p-4 flex items-center gap-3 hover:border-gray-700 hover:bg-gray-900/80 transition-all group ${isSelected ? 'border-yellow-700/60 bg-yellow-900/10' : ''}`}
+              >
+                {/* Checkbox for batch-eligible projects */}
+                {eligible ? (
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(p.id)}
+                    onClick={e => e.stopPropagation()}
+                    className="w-4 h-4 flex-shrink-0 accent-yellow-500 cursor-pointer"
+                  />
+                ) : (
+                  <div className="w-4 flex-shrink-0" />
+                )}
+
                 <Link to={`/projects/${p.id}`} className="flex items-center gap-4 flex-1 min-w-0">
                   <div className="w-10 h-10 rounded-lg bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
                     <Film size={18} className="text-indigo-400" />
@@ -138,6 +264,11 @@ export default function Dashboard() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-gray-100 group-hover:text-white truncate">{p.title}</span>
                       <StatusBadge status={p.status} />
+                      {batchProjectStatus && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${BATCH_PROJECT_STATUS[batchProjectStatus.status]?.color || 'text-gray-400'} bg-gray-800`}>
+                          {BATCH_PROJECT_STATUS[batchProjectStatus.status]?.label}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
                       <span>{p.style_id ? p.style_id.replace('style-', '') : 'No style'}</span>

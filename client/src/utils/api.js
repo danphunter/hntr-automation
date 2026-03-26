@@ -78,6 +78,8 @@ export const api = {
     request('POST', `/render/${projectId}`, { usePlaceholders }),
   getRenderStatus: (jobId) => request('GET', `/render/status/${jobId}`),
   downloadUrl: (projectId) => `${BASE}/render/download/${projectId}?token=${getToken()}`,
+  startBatchRender: (projectIds) => request('POST', '/render/batch', { projectIds }),
+  getBatchStatus: (batchId) => request('GET', `/render/batch/${batchId}`),
 
   // Settings
   getSettings: () => request('GET', '/settings'),
