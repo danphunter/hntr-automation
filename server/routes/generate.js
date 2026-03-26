@@ -40,6 +40,54 @@ const WHISK_WORD_REPLACEMENTS = {
   'torture': 'ordeal', 'execution': 'ceremony', 'massacre': 'upheaval',
 };
 
+// Rule-based visual prompt generator used when no OpenAI key is configured.
+// Extracts theme/mood from transcript text and maps to concrete visual scene descriptors.
+function buildRuleBasedVisualPrompt(text, styleContext) {
+  const t = text.toLowerCase();
+
+  // Theme → [setting, atmosphere]
+  const themes = [
+    { keywords: ['heaven', 'eternity', 'eternal', 'afterlife', 'paradise', 'divine', 'god', 'angel', 'soul', 'spirit', 'holy', 'sacred', 'worship', 'prayer', 'faith', 'salvation', 'resurrection'],
+      setting: 'ancient stone cathedral interior', atmosphere: 'golden light streaming through stained glass windows, dust particles floating in light beams, peaceful and transcendent' },
+    { keywords: ['hell', 'demon', 'devil', 'darkness', 'shadow', 'evil', 'sin', 'curse', 'damnation'],
+      setting: 'dark underground cavern with glowing embers', atmosphere: 'dramatic red and orange light, deep shadows, ominous atmosphere, low angle shot' },
+    { keywords: ['nature', 'forest', 'tree', 'river', 'ocean', 'mountain', 'earth', 'wild', 'animal', 'creature', 'grow', 'plant', 'garden', 'leaf', 'flower'],
+      setting: 'ancient old-growth forest', atmosphere: 'golden hour sunlight filtering through canopy, morning mist, lush green foliage, wide angle landscape' },
+    { keywords: ['money', 'wealth', 'rich', 'success', 'business', 'work', 'career', 'profit', 'invest', 'finance', 'market', 'economy', 'company', 'corporate'],
+      setting: 'modern glass skyscraper interior', atmosphere: 'cool blue-white lighting, city skyline in background, sleek minimalist architecture, cinematic wide shot' },
+    { keywords: ['love', 'heart', 'family', 'child', 'mother', 'father', 'together', 'relationship', 'bond', 'care', 'home', 'warm'],
+      setting: 'sunlit living room with warm wooden tones', atmosphere: 'soft golden hour light through curtains, warm bokeh, cozy intimate atmosphere' },
+    { keywords: ['fear', 'danger', 'threat', 'anxiety', 'worry', 'stress', 'nervous', 'panic', 'dread', 'warning'],
+      setting: 'isolated path through dark foggy forest', atmosphere: 'overcast dramatic sky, heavy shadow, cold blue-grey tones, tense and foreboding' },
+    { keywords: ['science', 'technology', 'future', 'space', 'star', 'universe', 'cosmos', 'planet', 'discover', 'invent', 'innovation', 'digital', 'computer', 'ai'],
+      setting: 'futuristic laboratory with holographic displays', atmosphere: 'cool blue and white neon light, sleek surfaces, dramatic uplighting, wide angle' },
+    { keywords: ['history', 'ancient', 'empire', 'king', 'queen', 'castle', 'kingdom', 'medieval', 'roman', 'war', 'battle', 'conquest', 'civilization'],
+      setting: 'ancient stone fortress on a hilltop', atmosphere: 'dramatic storm clouds, golden sunset light breaking through, epic wide angle vista' },
+    { keywords: ['journey', 'travel', 'road', 'path', 'quest', 'adventure', 'explore', 'discover', 'destination', 'horizon'],
+      setting: 'winding mountain road stretching to the horizon', atmosphere: 'dramatic golden hour light, sweeping landscape, cinematic wide angle, sense of scale' },
+    { keywords: ['mind', 'thought', 'wisdom', 'knowledge', 'learn', 'understand', 'truth', 'philosophy', 'question', 'answer', 'secret', 'hidden', 'reveal'],
+      setting: 'ancient library with towering bookshelves', atmosphere: 'warm candlelight and shafts of sunlight, dust motes in air, deep shadows, contemplative atmosphere' },
+    { keywords: ['power', 'control', 'influence', 'leader', 'authority', 'rule', 'dominate', 'command'],
+      setting: 'grand throne room with high vaulted ceilings', atmosphere: 'dramatic side-lighting, long shadows, imposing stone columns, cinematic low angle' },
+    { keywords: ['change', 'transform', 'new', 'begin', 'start', 'birth', 'create', 'build', 'rise', 'hope'],
+      setting: 'mountain summit at sunrise', atmosphere: 'golden sunrise light breaking over clouds, dramatic sky, vast panorama, inspirational atmosphere' },
+  ];
+
+  let setting = 'dramatic landscape at dusk';
+  let atmosphere = 'warm golden light, sweeping vista, cinematic wide angle shot, high quality photograph';
+
+  for (const theme of themes) {
+    if (theme.keywords.some(k => t.includes(k))) {
+      setting = theme.setting;
+      atmosphere = theme.atmosphere;
+      break;
+    }
+  }
+
+  const stylePrefix = styleContext ? `${styleContext}. ` : '';
+  return `${stylePrefix}${setting}, ${atmosphere}, cinematic, dramatic lighting, high quality film still`.trim();
+}
+
 function sanitizeForWhisk(prompt) {
   let sanitized = prompt;
   for (const [word, replacement] of Object.entries(WHISK_WORD_REPLACEMENTS)) {
@@ -325,9 +373,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 
   if (!apiKey) {
     const updated = scenes.map(scene => {
-      const visualBase = scene.text.slice(0, 150).replace(/["""'']/g, '');
-      const stylePrefix = styleContext ? `${styleContext}. ` : '';
-      const prompt = `${stylePrefix}A cinematic scene depicting: ${visualBase}. Dramatic lighting, high quality, film still, wide angle shot.`;
+      const prompt = buildRuleBasedVisualPrompt(scene.text, styleContext);
       db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
       return { id: scene.id, image_prompt: prompt };
     });
@@ -344,10 +390,13 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: `You write concise, vivid image prompts for AI image generation. ${styleContext} Each prompt must be visually specific, cinematic, and under 150 words. Return only the prompt.` },
-            { role: 'user', content: `Write an image prompt for this scene: "${scene.text}"` },
+            {
+              role: 'system',
+              content: `You are a visual scene descriptor for AI image generation. ${styleContext ? styleContext + ' ' : ''}Convert the given transcript text into a concrete visual scene description. Do NOT quote or paraphrase the transcript. Instead describe what would be visually depicted: the setting, architecture, landscape, time of day, lighting quality, atmosphere, camera angle, and mood. Use concrete visual nouns (e.g. "stone temple", "golden hour", "dust particles in light beams"). Add cinematic style qualifiers. Under 100 words. Return only the visual prompt, no explanation.`,
+            },
+            { role: 'user', content: `Transcript: "${scene.text}"\n\nWrite the visual scene description:` },
           ],
-          max_tokens: 200,
+          max_tokens: 150,
         }),
       });
       const data = await resp.json();
