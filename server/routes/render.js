@@ -59,14 +59,12 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   db.prepare('UPDATE projects SET status = ?, render_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run('rendering', req.params.projectId);
 
-  const kenBurns = req.body.kenBurns === true;
-
   renderJobs.set(jobId, { status: 'processing', progress: 0, projectId: req.params.projectId });
 
   res.json({ jobId, message: 'Render started' });
 
   // Run render async
-  runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db, kenBurns).catch(err => {
+  runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db).catch(err => {
     console.error('Render failed:', err);
     renderJobs.set(jobId, { status: 'error', error: err.message, projectId: req.params.projectId });
     db.prepare("UPDATE projects SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -74,7 +72,7 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   });
 });
 
-async function runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db, kenBurns = false) {
+async function runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db) {
   const tmpDir = path.join(RENDERS_DIR, `tmp-${jobId}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -136,28 +134,10 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
       const { path: imgPath, duration: dur } = scenePaths[i];
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
-      const frames = Math.ceil(dur * FPS);
-      let filter;
-      if (kenBurns) {
-        const zoomDir = i % 2 === 0 ? 'in' : 'out';
-        const startZoom = zoomDir === 'in' ? 1.0 : 1.05;
-        const endZoom = zoomDir === 'in' ? 1.05 : 1.0;
-        const zoomStep = (endZoom - startZoom) / frames;
-        const zoomExpr = zoomDir === 'in'
-          ? `min(zoom+${zoomStep.toFixed(6)},${endZoom})`
-          : `max(zoom-${Math.abs(zoomStep).toFixed(6)},${endZoom})`;
-
-        // zoompan at 1280x720 (lower memory), then scale to 1920x1080
-        filter =
-          `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,` +
-          `zoompan=z='${zoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1280x720:fps=${FPS},` +
-          `scale=1920:1080,setpts=PTS-STARTPTS`;
-      } else {
-        // Static: scale to 1920x1080 and hold for scene duration
-        filter =
-          `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
-          `fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
-      }
+      // Static: scale to 1920x1080 and hold for scene duration
+      const filter =
+        `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
+        `fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
 
       console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur}s, ${frames} frames)...`);
 
@@ -207,7 +187,7 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   }
 }
 
-// Encode a single image into a video clip with Ken Burns zoom
+// Encode a single image into a static video clip
 function renderSceneClip(imgPath, clipPath, filter, duration) {
   return new Promise((resolve, reject) => {
     ffmpeg()
