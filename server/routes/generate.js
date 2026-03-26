@@ -6,7 +6,8 @@ const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
-const IMAGES_DIR = path.join(__dirname, '..', 'uploads', 'images');
+// Use UPLOADS_PATH env var (set by index.js, points to /data/uploads on Railway for persistence)
+const IMAGES_DIR = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads'), 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
 function getSettings(db) {
@@ -295,7 +296,9 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 });
 
 // GET /api/generate/image-file/:filename
-router.get('/image-file/:filename', authMiddleware, (req, res) => {
+// No auth required — filenames are UUID-based (unguessable) and contain no sensitive data.
+// Browser <img> tags load images without Authorization headers, so auth here breaks previews.
+router.get('/image-file/:filename', (req, res) => {
   const imgPath = path.join(IMAGES_DIR, req.params.filename);
   if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Not found' });
   res.sendFile(imgPath);
