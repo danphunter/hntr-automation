@@ -8,8 +8,11 @@ const { initDb } = require('./db/database');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Ensure upload directories exist before anything else touches them
-const UPLOADS_BASE = path.join(__dirname, 'uploads');
+// On Railway, use UPLOADS_PATH env var (persistent volume).
+// Detect Railway and default to /data/uploads, else local server/uploads.
+const UPLOADS_BASE = process.env.UPLOADS_PATH
+  || (process.env.RAILWAY_ENVIRONMENT ? '/data/uploads' : path.join(__dirname, 'uploads'));
+process.env.UPLOADS_PATH = UPLOADS_BASE; // expose to route files
 for (const sub of ['', 'images', 'references']) {
   const dir = path.join(UPLOADS_BASE, sub);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -57,5 +60,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 HNTR Automation Server running on http://localhost:${PORT}`);
   console.log(`   API: http://localhost:${PORT}/api/health`);
-  console.log(`   Mode: ${process.env.NODE_ENV || 'development'}\n`);
+  console.log(`   Mode: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`   Uploads: ${UPLOADS_BASE}`);
+  console.log(`   Railway env: ${process.env.RAILWAY_ENVIRONMENT || 'not set'}\n`);
 });

@@ -1,285 +1,267 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
-import { analyzeScript, recalcTimings, formatTime } from '../utils/scriptAnalyzer';
+import { recalcTimings, formatTime } from '../utils/scriptAnalyzer';
 import {
-  ChevronLeft, Mic, Scissors, Image, Film, Download, Loader2,
-  RefreshCw, Upload, Play, Clock, CheckCircle2, AlertCircle,
-  Wand2, Save, Trash2, Plus, MoreVertical, ExternalLink, X, Zap,
+  ChevronLeft, ChevronRight, Mic, Scissors, Image, Film, Download,
+  Loader2, RefreshCw, Upload, Clock, CheckCircle2, AlertCircle,
+  Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
-const TABS = [
-  { id: 'scenes', label: 'Scenes & Images', icon: Scissors },
-  { id: 'audio', label: 'Audio', icon: Mic },
-  { id: 'render', label: 'Export Video', icon: Film },
+const STEPS = [
+  { id: 1, label: 'Project Details', icon: FileText },
+  { id: 2, label: 'Upload Audio',    icon: Mic },
+  { id: 3, label: 'Transcription',   icon: Scissors },
+  { id: 4, label: 'Images',          icon: Image },
+  { id: 5, label: 'Render',          icon: Film },
 ];
 
-function SceneCard({ scene, index, onUpdate, onRegenerate, onDelete, generatingId }) {
-  const [editingText, setEditingText] = useState(false);
-  const [editingPrompt, setEditingPrompt] = useState(false);
+// ── Scene card for Step 3 (transcription review) ──────────────────────────────
+function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
+  const [editing, setEditing] = useState(false);
   const [localText, setLocalText] = useState(scene.text);
-  const [localPrompt, setLocalPrompt] = useState(scene.image_prompt || '');
   const [localDuration, setLocalDuration] = useState(scene.duration);
-  const isGenerating = generatingId === scene.id;
 
-  function saveText() {
-    setEditingText(false);
-    if (localText !== scene.text || localDuration !== scene.duration) {
+  function save() {
+    setEditing(false);
+    if (localText !== scene.text || parseFloat(localDuration) !== scene.duration) {
       onUpdate(scene.id, { text: localText, duration: parseFloat(localDuration) });
     }
   }
 
-  function savePrompt() {
-    setEditingPrompt(false);
-    if (localPrompt !== scene.image_prompt) {
-      onUpdate(scene.id, { image_prompt: localPrompt });
-    }
-  }
-
   return (
-    <div className="card overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-gray-800/50 border-b border-gray-800">
-        <div className="w-7 h-7 rounded-lg bg-indigo-900/60 border border-indigo-800/40 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0">
+    <div className="card p-4">
+      <div className="flex items-start gap-3">
+        <div className="w-7 h-7 rounded-lg bg-indigo-900/60 border border-indigo-800/40 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0 mt-0.5">
           {index + 1}
         </div>
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span className="text-xs font-mono text-gray-500">
-            {formatTime(scene.start_time)} → {formatTime(scene.end_time)}
-          </span>
-          <span className="text-xs text-gray-600">({scene.duration}s)</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-mono text-gray-500">
+              {formatTime(scene.start_time)} → {formatTime(scene.end_time)}
+            </span>
+            <span className="text-xs text-gray-600 bg-gray-800 rounded px-1.5 py-0.5">
+              {scene.duration}s
+            </span>
+          </div>
+          {editing ? (
+            <div className="space-y-2">
+              <textarea
+                className="input text-sm resize-none w-full"
+                rows={3}
+                value={localText}
+                onChange={e => setLocalText(e.target.value)}
+                autoFocus
+              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="text-xs text-gray-500">Duration (s):</label>
+                <input
+                  type="number" step="0.5" min="1" max="60"
+                  className="input text-xs w-20"
+                  value={localDuration}
+                  onChange={e => setLocalDuration(e.target.value)}
+                />
+                <button onClick={save} className="btn-primary text-xs py-1 px-3 flex items-center gap-1">
+                  <Save size={11} /> Save
+                </button>
+                <button onClick={() => setEditing(false)} className="text-xs text-gray-600 hover:text-gray-400">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-300 leading-relaxed">{scene.text}</p>
+          )}
         </div>
-        <div className="flex items-center gap-1">
-          {scene.status === 'generated' && <CheckCircle2 size={14} className="text-green-400" />}
-          {scene.status === 'pending' && <Clock size={14} className="text-gray-600" />}
-          <button onClick={() => onDelete(scene.id)} className="text-gray-700 hover:text-red-400 transition-colors ml-1">
-            <Trash2 size={14} />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => setEditing(v => !v)}
+            className="text-xs text-gray-600 hover:text-gray-400 px-2 py-1 rounded hover:bg-gray-800"
+          >
+            Edit
           </button>
-        </div>
-      </div>
-
-      <div className="p-4 flex gap-4">
-        {/* Image */}
-        <div className="w-44 flex-shrink-0">
-          <div className="aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative">
-            {scene.image_url ? (
-              <img src={scene.image_url} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-700">
-                <Image size={24} />
-              </div>
-            )}
-            {isGenerating && (
-              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                <Loader2 size={20} className="animate-spin text-indigo-400" />
-              </div>
-            )}
-          </div>
-          <div className="flex gap-1 mt-2">
-            <button
-              onClick={() => onRegenerate(scene.id)}
-              disabled={isGenerating}
-              className="flex-1 text-xs py-1.5 rounded-md bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
-            >
-              {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-              {scene.image_url ? 'Regen' : 'Generate'}
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0 space-y-3">
-          {/* Scene text */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Scene Text</span>
-              <button onClick={() => setEditingText(v => !v)} className="text-xs text-gray-600 hover:text-gray-400">
-                {editingText ? 'Cancel' : 'Edit'}
-              </button>
-            </div>
-            {editingText ? (
-              <div className="space-y-2">
-                <textarea
-                  className="input text-sm resize-none"
-                  rows={3}
-                  value={localText}
-                  onChange={e => setLocalText(e.target.value)}
-                  autoFocus
-                />
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500">Duration (s):</label>
-                  <input type="number" step="0.5" min="1" max="60" className="input text-xs w-20" value={localDuration} onChange={e => setLocalDuration(e.target.value)} />
-                  <button onClick={saveText} className="btn-primary text-xs py-1 px-3"><Save size={11} /></button>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-300 leading-relaxed">{scene.text}</p>
-            )}
-          </div>
-
-          {/* Image prompt */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Image Prompt</span>
-              <button onClick={() => setEditingPrompt(v => !v)} className="text-xs text-gray-600 hover:text-gray-400">
-                {editingPrompt ? 'Cancel' : 'Edit'}
-              </button>
-            </div>
-            {editingPrompt ? (
-              <div className="space-y-2">
-                <textarea
-                  className="input text-xs resize-none font-mono"
-                  rows={3}
-                  value={localPrompt}
-                  onChange={e => setLocalPrompt(e.target.value)}
-                  autoFocus
-                />
-                <button onClick={savePrompt} className="btn-primary text-xs py-1 px-3 flex items-center gap-1"><Save size={11} /> Save prompt</button>
-              </div>
-            ) : (
-              <p className="text-xs text-gray-500 font-mono line-clamp-2">
-                {scene.image_prompt || <span className="text-gray-700 italic">No prompt yet — click "Auto-generate prompts" or edit manually</span>}
-              </p>
-            )}
-          </div>
+          <button onClick={() => onDelete(scene.id)} className="text-gray-700 hover:text-red-400 p-1">
+            <Trash2 size={13} />
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
+// ── Scene card for Step 4 (image generation) ─────────────────────────────────
+function ImageSceneCard({ scene, index, onRegenerate, generatingId }) {
+  const isGenerating = generatingId === scene.id;
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border-b border-gray-800">
+        <div className="w-6 h-6 rounded bg-indigo-900/60 border border-indigo-800/40 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0">
+          {index + 1}
+        </div>
+        <span className="text-xs font-mono text-gray-500 flex-1 truncate">
+          {formatTime(scene.start_time)} → {formatTime(scene.end_time)} · {scene.duration}s
+        </span>
+        {isGenerating && <Loader2 size={13} className="animate-spin text-indigo-400 flex-shrink-0" />}
+        {!isGenerating && scene.status === 'generated' && <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />}
+        {!isGenerating && scene.status !== 'generated' && <Clock size={13} className="text-gray-600 flex-shrink-0" />}
+      </div>
+      <div className="p-3 flex gap-3">
+        <div className="w-36 flex-shrink-0">
+          <div className="aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative">
+            {scene.image_url ? (
+              <img src={scene.image_url} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-700">
+                {isGenerating
+                  ? <Loader2 size={20} className="animate-spin text-indigo-400" />
+                  : <Image size={20} />}
+              </div>
+            )}
+            {isGenerating && scene.image_url && (
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <Loader2 size={18} className="animate-spin text-indigo-400" />
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => onRegenerate(scene.id)}
+            disabled={isGenerating}
+            className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+          >
+            {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+            Regenerate
+          </button>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-gray-300 leading-relaxed line-clamp-4">{scene.text}</p>
+          {scene.image_prompt && (
+            <p className="text-xs text-gray-600 font-mono mt-2 line-clamp-2">{scene.image_prompt}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function ProjectDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
-  const { isAdmin, user } = useAuth();
+  const { isAdmin } = useAuth();
+
   const [project, setProject] = useState(null);
   const [scenes, setScenes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('scenes');
-  const [generatingId, setGeneratingId] = useState(null);
-  const [generatingAll, setGeneratingAll] = useState(false);
-  const [generatingPrompts, setGeneratingPrompts] = useState(false);
-  const [savingScenes, setSavingScenes] = useState(false);
-  const [renderJobId, setRenderJobId] = useState(null);
-  const [renderProgress, setRenderProgress] = useState(null);
+  const [step, setStep] = useState(1);
+  const [error, setError] = useState('');
+
+  // Step 1
+  const [styles, setStyles] = useState([]);
+  const [editTitle, setEditTitle] = useState('');
+  const [editStyleId, setEditStyleId] = useState('');
+  const [savingDetails, setSavingDetails] = useState(false);
+
+  // Step 2
   const [audioFile, setAudioFile] = useState(null);
   const [uploadingAudio, setUploadingAudio] = useState(false);
+
+  // Step 3
   const [transcribing, setTranscribing] = useState(false);
+  const transcribeTriggered = useRef(false);
+
+  // Step 4
+  const [generatingPrompts, setGeneratingPrompts] = useState(false);
+  const [generatingId, setGeneratingId] = useState(null);
+  const [generatingAll, setGeneratingAll] = useState(false);
+  const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const autoGenTriggered = useRef(false);
+  const scenesRef = useRef([]);
+
+  // Step 5
+  const [renderProgress, setRenderProgress] = useState(null);
   const [usePlaceholders, setUsePlaceholders] = useState(false);
-  const [error, setError] = useState('');
   const pollRef = useRef(null);
 
+  // Keep scenesRef in sync for use inside async auto-generate
+  useEffect(() => { scenesRef.current = scenes; }, [scenes]);
+
+  // ── Initial load ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    Promise.all([api.getProject(id), api.getStyles()])
+      .then(([proj, stls]) => {
+        const scns = proj.scenes || [];
+        setProject(proj);
+        setScenes(scns);
+        setEditTitle(proj.title || '');
+        // style_id may be null for older projects — fall back to matching by style name
+        const styleId = proj.style_id
+          ? String(proj.style_id)
+          : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
+        setEditStyleId(styleId);
+        setStyles(stls);
+        setStep(detectInitialStep(proj, scns));
+      })
+      .finally(() => setLoading(false));
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [id]);
+
+  function detectInitialStep(proj, scns) {
+    if (!proj.audio_filename) return 2;
+    if (!scns || scns.length === 0) return 3;
+    if (scns.some(s => s.status !== 'generated')) return 4;
+    return 5;
+  }
+
+  // ── Step 3: auto-transcribe on entry ────────────────────────────────────────
+  useEffect(() => {
+    if (
+      step === 3 &&
+      project?.audio_filename &&
+      scenes.length === 0 &&
+      !transcribing &&
+      !transcribeTriggered.current
+    ) {
+      transcribeTriggered.current = true;
+      handleTranscribe();
+    }
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Step 4: auto-generate images on entry ───────────────────────────────────
+  useEffect(() => {
+    if (step === 4 && !autoGenTriggered.current && !generatingAll) {
+      const currentScenes = scenesRef.current;
+      if (currentScenes.length > 0 && currentScenes.some(s => s.status !== 'generated')) {
+        autoGenTriggered.current = true;
+        handleAutoGenerate(currentScenes);
+      }
+    }
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Shared helpers ──────────────────────────────────────────────────────────
   async function loadProject() {
     const data = await api.getProject(id);
     setProject(data);
     setScenes(data.scenes || []);
+    return data;
   }
 
-  useEffect(() => {
-    loadProject().finally(() => setLoading(false));
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [id]);
-
-  // Auto-analyze script into scenes if none exist
-  useEffect(() => {
-    if (project && scenes.length === 0 && project.script) {
-      const analyzed = analyzeScript(project.script);
-      setScenes(analyzed);
-    }
-  }, [project]);
-
-  function handleUpdateScene(sceneId, updates) {
-    setScenes(prev => {
-      const updated = prev.map(s => s.id === sceneId ? { ...s, ...updates } : s);
-      return recalcTimings(updated);
-    });
-  }
-
-  function handleDeleteScene(sceneId) {
-    setScenes(prev => recalcTimings(prev.filter(s => s.id !== sceneId)));
-  }
-
-  function handleAddScene() {
-    const lastScene = scenes[scenes.length - 1];
-    const newScene = {
-      id: `scene-${Date.now()}`,
-      scene_order: scenes.length,
-      text: 'New scene — double click to edit',
-      start_time: lastScene ? lastScene.end_time : 0,
-      end_time: (lastScene ? lastScene.end_time : 0) + 5,
-      duration: 5,
-      image_prompt: '',
-      image_url: '',
-      status: 'pending',
-    };
-    setScenes(prev => [...prev, newScene]);
-  }
-
-  async function handleSaveScenes() {
-    setSavingScenes(true);
-    try {
-      const saved = await api.saveScenes(id, scenes);
-      setScenes(saved);
-    } catch (err) { setError(err.message); }
-    finally { setSavingScenes(false); }
-  }
-
-  async function handleGeneratePrompts() {
-    setGeneratingPrompts(true);
+  // ── Step 1 ──────────────────────────────────────────────────────────────────
+  async function handleSaveDetails() {
+    setSavingDetails(true);
     setError('');
     try {
-      await handleSaveScenes();
-      const result = await api.generatePrompts(id);
-      const updated = scenes.map(s => {
-        const found = result.scenes.find(r => r.id === s.id);
-        return found ? { ...s, image_prompt: found.image_prompt } : s;
+      const updated = await api.updateProject(id, {
+        title: editTitle,
+        style_id: parseInt(editStyleId, 10),
+        style: selectedStyle?.name || '',
       });
-      setScenes(updated);
+      setProject(updated);
+      setStep(2);
     } catch (err) { setError(err.message); }
-    finally { setGeneratingPrompts(false); }
+    finally { setSavingDetails(false); }
   }
 
-  async function handleRegenerateImage(sceneId) {
-    setGeneratingId(sceneId);
-    setError('');
-    try {
-      // Save scenes first to persist prompt edits
-      await api.saveScenes(id, scenes);
-      const result = await api.generateImage(sceneId);
-      setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated' } : s));
-    } catch (err) {
-      setError(err.message);
-      // Check for token expired
-      if (err.message?.toLowerCase().includes('rate_limited') || err.message?.toLowerCase().includes('token')) {
-        setError('Whisk token expired. ' + err.message);
-      }
-    }
-    finally { setGeneratingId(null); }
-  }
-
-  async function handleGenerateAll() {
-    setGeneratingAll(true);
-    setError('');
-    try {
-      await handleSaveScenes();
-      for (const scene of scenes) {
-        if (scene.status !== 'generated') {
-          setGeneratingId(scene.id);
-          try {
-            const result = await api.generateImage(scene.id);
-            setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s));
-          } catch (err) {
-            setError(`Scene ${scene.scene_order + 1}: ${err.message}`);
-          }
-        }
-      }
-    } finally {
-      setGeneratingAll(false);
-      setGeneratingId(null);
-    }
-  }
-
+  // ── Step 2 ──────────────────────────────────────────────────────────────────
   async function handleUploadAudio() {
     if (!audioFile) return;
     setUploadingAudio(true);
@@ -288,10 +270,15 @@ export default function ProjectDetail() {
       await api.uploadAudio(id, audioFile);
       await loadProject();
       setAudioFile(null);
+      // Reset transcription state for new audio
+      transcribeTriggered.current = false;
+      setScenes([]);
+      setStep(3);
     } catch (err) { setError(err.message); }
     finally { setUploadingAudio(false); }
   }
 
+  // ── Step 3 ──────────────────────────────────────────────────────────────────
   async function handleTranscribe() {
     setTranscribing(true);
     setError('');
@@ -299,16 +286,109 @@ export default function ProjectDetail() {
       const result = await api.transcribeAudio(id);
       setScenes(result.scenes || []);
       await loadProject();
-    } catch (err) { setError(err.message); }
+    } catch (err) {
+      setError(err.message);
+      transcribeTriggered.current = false;
+    }
     finally { setTranscribing(false); }
   }
 
+  function handleUpdateScene(sceneId, updates) {
+    setScenes(prev => recalcTimings(prev.map(s => s.id === sceneId ? { ...s, ...updates } : s)));
+  }
+
+  function handleDeleteScene(sceneId) {
+    setScenes(prev => recalcTimings(prev.filter(s => s.id !== sceneId)));
+  }
+
+  function handleAddScene() {
+    const lastScene = scenes[scenes.length - 1];
+    setScenes(prev => [...prev, {
+      id: `scene-${Date.now()}`,
+      scene_order: prev.length,
+      text: 'New scene',
+      start_time: lastScene ? lastScene.end_time : 0,
+      end_time: (lastScene ? lastScene.end_time : 0) + 5,
+      duration: 5,
+      image_prompt: '',
+      image_url: '',
+      status: 'pending',
+    }]);
+  }
+
+  async function handleGoToImages() {
+    setError('');
+    try {
+      await api.saveScenes(id, scenes);
+      autoGenTriggered.current = false;
+      setStep(4);
+    } catch (err) { setError(err.message); }
+  }
+
+  // ── Step 4 ──────────────────────────────────────────────────────────────────
+  async function handleAutoGenerate(initialScenes) {
+    setGeneratingAll(true);
+    setError('');
+    try {
+      let workingScenes = initialScenes || scenesRef.current;
+
+      // Generate prompts if any scene is missing one
+      if (workingScenes.some(s => !s.image_prompt)) {
+        setGeneratingPrompts(true);
+        try {
+          const result = await api.generatePrompts(id);
+          workingScenes = workingScenes.map(s => {
+            const found = result.scenes.find(r => r.id === s.id);
+            return found ? { ...s, image_prompt: found.image_prompt } : s;
+          });
+          setScenes(workingScenes);
+        } finally {
+          setGeneratingPrompts(false);
+        }
+      }
+
+      // Generate images for pending scenes
+      const pending = workingScenes.filter(s => s.status !== 'generated');
+      setGenProgress({ current: 0, total: pending.length });
+
+      for (let i = 0; i < pending.length; i++) {
+        const scene = pending[i];
+        setGeneratingId(scene.id);
+        setGenProgress({ current: i + 1, total: pending.length });
+        try {
+          const result = await api.generateImage(scene.id);
+          setScenes(prev => prev.map(s =>
+            s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
+          ));
+        } catch (err) {
+          setError(`Scene ${(scene.scene_order ?? i) + 1}: ${err.message}`);
+        }
+      }
+    } finally {
+      setGeneratingAll(false);
+      setGeneratingId(null);
+    }
+  }
+
+  async function handleRegenerateImage(sceneId) {
+    setGeneratingId(sceneId);
+    setError('');
+    try {
+      await api.saveScenes(id, scenes);
+      const result = await api.generateImage(sceneId);
+      setScenes(prev => prev.map(s =>
+        s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated' } : s
+      ));
+    } catch (err) { setError(err.message); }
+    finally { setGeneratingId(null); }
+  }
+
+  // ── Step 5 ──────────────────────────────────────────────────────────────────
   async function handleStartRender() {
     setError('');
     try {
-      await handleSaveScenes();
+      await api.saveScenes(id, scenes);
       const result = await api.startRender(id, usePlaceholders);
-      setRenderJobId(result.jobId);
       setRenderProgress({ status: 'processing', progress: 0 });
 
       pollRef.current = setInterval(async () => {
@@ -316,14 +396,18 @@ export default function ProjectDetail() {
         setRenderProgress(status);
         if (status.status === 'complete' || status.status === 'error') {
           clearInterval(pollRef.current);
-          if (status.status === 'complete') {
-            await loadProject();
-          }
+          if (status.status === 'complete') await loadProject();
         }
       }, 2000);
     } catch (err) { setError(err.message); }
   }
 
+  // ── Computed ────────────────────────────────────────────────────────────────
+  const totalDuration = scenes.reduce((a, s) => a + (s.duration || 0), 0);
+  const imagesReady = scenes.filter(s => s.status === 'generated').length;
+  const selectedStyle = styles.find(s => String(s.id) === String(editStyleId));
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="flex items-center justify-center py-24">
       <Loader2 size={32} className="animate-spin text-indigo-500" />
@@ -337,25 +421,20 @@ export default function ProjectDetail() {
     </div>
   );
 
-  const totalDuration = scenes.reduce((a, s) => a + s.duration, 0);
-  const imagesReady = scenes.filter(s => s.status === 'generated').length;
-
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex items-start gap-4 mb-6">
-        <Link to={isAdmin ? '/admin' : '/dashboard'} className="text-gray-500 hover:text-gray-300 mt-1 flex-shrink-0">
+    <div className="p-6 max-w-3xl mx-auto">
+
+      {/* ── Page header ─────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 mb-6">
+        <Link to={isAdmin ? '/admin' : '/dashboard'} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
           <ChevronLeft size={20} />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold text-white truncate">{project.title}</h1>
-          <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 flex-wrap">
-            <span>{scenes.length} scenes</span>
-            <span>·</span>
-            <span>{formatTime(totalDuration)} est.</span>
-            <span>·</span>
+          <h1 className="text-xl font-bold text-white truncate">{project.title}</h1>
+          <div className="text-xs text-gray-500 mt-0.5">
+            {scenes.length} scenes · {formatTime(totalDuration)} ·{' '}
             <span className={`capitalize ${
-              project.status === 'complete' ? 'text-green-400' :
+              project.status === 'complete'  ? 'text-green-400' :
               project.status === 'rendering' ? 'text-yellow-400' :
               project.status === 'in_progress' ? 'text-blue-400' : 'text-gray-500'
             }`}>{project.status?.replace('_', ' ')}</span>
@@ -365,202 +444,359 @@ export default function ProjectDetail() {
           <a
             href={api.downloadUrl(id)}
             className="btn-primary flex items-center gap-2 flex-shrink-0"
-            download
+            download={`${project.title}.mp4`}
           >
-            <Download size={16} /> Download MP4
+            <Download size={15} /> Download MP4
           </a>
         )}
       </div>
 
+      {/* ── Wizard progress bar ─────────────────────────────────────────────── */}
+      <div className="flex items-center mb-8">
+        {STEPS.map((s, i) => {
+          const isDone    = step > s.id;
+          const isCurrent = step === s.id;
+          const Icon = s.icon;
+          return (
+            <React.Fragment key={s.id}>
+              <button
+                onClick={() => (isDone || isCurrent) && setStep(s.id)}
+                disabled={!isDone && !isCurrent}
+                className={`flex flex-col items-center gap-1 flex-shrink-0 ${isDone ? 'cursor-pointer' : isCurrent ? 'cursor-default' : 'cursor-default'}`}
+              >
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all ${
+                  isDone    ? 'bg-indigo-600 border-indigo-600 text-white'
+                : isCurrent ? 'bg-gray-900 border-indigo-500 text-indigo-400'
+                :             'bg-gray-900 border-gray-700 text-gray-600'
+                }`}>
+                  {isDone ? <CheckCircle2 size={16} /> : <Icon size={15} />}
+                </div>
+                <span className={`text-xs font-medium hidden sm:block whitespace-nowrap ${
+                  isCurrent ? 'text-indigo-400' : isDone ? 'text-gray-400' : 'text-gray-600'
+                }`}>{s.label}</span>
+              </button>
+              {i < STEPS.length - 1 && (
+                <div className={`flex-1 h-0.5 mx-1 transition-all ${step > s.id ? 'bg-indigo-600' : 'bg-gray-800'}`} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      {/* ── Global error banner ─────────────────────────────────────────────── */}
       {error && (
         <div className="flex items-start gap-2 text-red-400 text-sm bg-red-900/20 border border-red-800/40 rounded-lg p-3 mb-4">
           <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-          <span>{error}</span>
-          <button onClick={() => setError('')} className="ml-auto text-red-600 hover:text-red-400"><X size={14} /></button>
+          <span className="flex-1">{error}</span>
+          <button onClick={() => setError('')} className="text-red-600 hover:text-red-400 flex-shrink-0"><X size={14} /></button>
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-800 mb-6">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === t.id
-                ? 'text-indigo-400 border-indigo-500'
-                : 'text-gray-500 border-transparent hover:text-gray-300'
-            }`}
-          >
-            <t.icon size={15} /> {t.label}
-          </button>
-        ))}
-      </div>
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* STEP 1 — Project Details                                            */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {step === 1 && (
+        <div className="card p-6 space-y-5">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <FileText size={18} className="text-indigo-400" /> Project Details
+          </h2>
 
-      {/* ── SCENES TAB ── */}
-      {activeTab === 'scenes' && (
-        <div>
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <button onClick={handleSaveScenes} disabled={savingScenes} className="btn-secondary flex items-center gap-2 text-sm">
-              {savingScenes ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Scenes
-            </button>
-            <button onClick={handleGeneratePrompts} disabled={generatingPrompts || generatingAll} className="btn-secondary flex items-center gap-2 text-sm">
-              {generatingPrompts ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />} Auto-generate Prompts
-            </button>
-            <button onClick={handleGenerateAll} disabled={generatingAll || generatingPrompts} className="btn-primary flex items-center gap-2 text-sm">
-              {generatingAll ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              {generatingAll ? 'Generating…' : `Generate All Images (${scenes.length - imagesReady} left)`}
-            </button>
-            <div className="ml-auto text-xs text-gray-500">
-              {imagesReady}/{scenes.length} images ready
-            </div>
+          <div>
+            <label className="label">Project Title</label>
+            <input
+              className="input w-full"
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              placeholder="Enter project title"
+            />
           </div>
 
-          {scenes.length === 0 ? (
-            <div className="card p-10 text-center">
-              <Scissors size={32} className="text-gray-700 mx-auto mb-3" />
-              <p className="text-gray-500">No scenes yet</p>
-              {project.script && (
-                <button onClick={() => setScenes(analyzeScript(project.script))} className="btn-primary mt-4 inline-flex items-center gap-2">
-                  <Wand2 size={15} /> Auto-detect Scenes from Script
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {scenes.map((scene, i) => (
-                <SceneCard
-                  key={scene.id}
-                  scene={scene}
-                  index={i}
-                  onUpdate={handleUpdateScene}
-                  onRegenerate={handleRegenerateImage}
-                  onDelete={handleDeleteScene}
-                  generatingId={generatingId}
-                />
+          <div>
+            <label className="label">Style / Niche</label>
+            <select
+              className="input w-full"
+              value={editStyleId}
+              onChange={e => setEditStyleId(e.target.value)}
+            >
+              <option value="">Select a style...</option>
+              {styles.map(s => (
+                <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
               ))}
-              <button onClick={handleAddScene} className="w-full p-3 border-2 border-dashed border-gray-800 rounded-xl text-gray-600 hover:border-gray-700 hover:text-gray-500 transition-colors text-sm flex items-center justify-center gap-2">
-                <Plus size={16} /> Add Scene
-              </button>
-            </div>
-          )}
+            </select>
+            {selectedStyle?.description && (
+              <p className="text-xs text-gray-500 mt-1.5">{selectedStyle.description}</p>
+            )}
+          </div>
+
+          <button
+            onClick={handleSaveDetails}
+            disabled={savingDetails || !editTitle.trim() || !editStyleId}
+            className="btn-primary w-full flex items-center justify-center gap-2"
+          >
+            {savingDetails && <Loader2 size={15} className="animate-spin" />}
+            Next: Upload Audio <ChevronRight size={15} />
+          </button>
         </div>
       )}
 
-      {/* ── AUDIO TAB ── */}
-      {activeTab === 'audio' && (
-        <div className="max-w-xl space-y-4">
-          {project.audio_filename ? (
-            <div className="card p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-green-900/40 border border-green-800/40 rounded-lg flex items-center justify-center">
-                  <Mic size={18} className="text-green-400" />
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-gray-200">{project.audio_filename}</div>
-                  <div className="text-xs text-green-400">Audio uploaded</div>
-                </div>
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* STEP 2 — Upload Audio                                               */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {step === 2 && (
+        <div className="card p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Mic size={18} className="text-indigo-400" /> Upload Voiceover
+          </h2>
+
+          {project.audio_filename && (
+            <div className="p-3 bg-green-900/20 border border-green-800/40 rounded-lg flex items-center gap-3">
+              <CheckCircle2 size={16} className="text-green-400 flex-shrink-0" />
+              <div className="min-w-0">
+                <div className="text-sm text-gray-200 truncate">{project.audio_filename}</div>
+                <div className="text-xs text-green-400">Audio uploaded</div>
               </div>
-              <audio controls src={`/api/projects/${id}/audio`} className="w-full" />
-            </div>
-          ) : (
-            <div className="card p-6 text-center border-dashed">
-              <Mic size={32} className="text-gray-700 mx-auto mb-3" />
-              <p className="text-gray-500 text-sm">No audio uploaded yet</p>
             </div>
           )}
 
-          <div className="card p-4">
-            <h3 className="font-medium text-gray-200 mb-3">
-              {project.audio_filename ? 'Replace Audio' : 'Upload Voiceover'}
-            </h3>
-            {audioFile ? (
-              <div className="flex items-center gap-3 mb-3 p-3 bg-gray-800 rounded-lg">
-                <Mic size={16} className="text-indigo-400" />
-                <span className="text-sm text-gray-300 flex-1 truncate">{audioFile.name}</span>
-                <button onClick={() => setAudioFile(null)} className="text-gray-600 hover:text-red-400"><X size={14} /></button>
+          {audioFile ? (
+            <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg">
+              <Mic size={16} className="text-indigo-400 flex-shrink-0" />
+              <span className="text-sm text-gray-300 flex-1 truncate">{audioFile.name}</span>
+              <button onClick={() => setAudioFile(null)} className="text-gray-600 hover:text-red-400 flex-shrink-0"><X size={14} /></button>
+            </div>
+          ) : (
+            <label className="flex flex-col items-center gap-3 p-8 border-2 border-dashed border-gray-700 rounded-xl cursor-pointer hover:border-indigo-700 hover:bg-indigo-900/10 transition-all">
+              <Upload size={28} className="text-gray-600" />
+              <div className="text-center">
+                <div className="text-sm text-gray-300 font-medium">Click to upload voiceover</div>
+                <div className="text-xs text-gray-600 mt-0.5">MP3, WAV, M4A supported</div>
               </div>
-            ) : (
-              <label className="flex items-center gap-3 p-4 border border-dashed border-gray-700 rounded-lg cursor-pointer hover:border-gray-600 hover:bg-gray-800/30 transition-all mb-3">
-                <Upload size={20} className="text-gray-600" />
-                <span className="text-sm text-gray-500">Click to upload MP3 / WAV</span>
-                <input type="file" accept="audio/*" className="hidden" onChange={e => setAudioFile(e.target.files[0])} />
-              </label>
-            )}
+              <input type="file" accept="audio/*" className="hidden" onChange={e => { if (e.target.files[0]) setAudioFile(e.target.files[0]); }} />
+            </label>
+          )}
+
+          {uploadingAudio && (
+            <div className="flex items-center gap-3 p-3 bg-indigo-900/20 border border-indigo-800/40 rounded-lg">
+              <Loader2 size={16} className="animate-spin text-indigo-400" />
+              <span className="text-sm text-indigo-300">Uploading audio...</span>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button onClick={() => setStep(1)} className="btn-secondary flex items-center gap-2">
+              <ChevronLeft size={15} /> Back
+            </button>
             <button
               onClick={handleUploadAudio}
               disabled={!audioFile || uploadingAudio}
-              className="btn-primary w-full flex items-center justify-center gap-2"
+              className="btn-primary flex-1 flex items-center justify-center gap-2"
             >
-              {uploadingAudio ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Upload size={15} /> Upload Audio</>}
+              {uploadingAudio
+                ? <><Loader2 size={15} className="animate-spin" /> Uploading…</>
+                : <><Upload size={15} /> Upload & Continue</>}
             </button>
           </div>
 
-          {project.audio_filename && (
-            <div className="card p-4">
-              <h3 className="font-medium text-gray-200 mb-1 flex items-center gap-2">
-                <Wand2 size={15} className="text-indigo-400" /> Auto-Transcribe to Scenes
-              </h3>
-              <p className="text-xs text-gray-500 mb-3">
-                Uses AssemblyAI to transcribe the voiceover and automatically create scenes with accurate timestamps. This replaces any existing scenes.
+          {project.audio_filename && !audioFile && (
+            <button
+              onClick={() => { transcribeTriggered.current = false; setStep(3); }}
+              className="btn-secondary w-full flex items-center justify-center gap-2 text-sm"
+            >
+              Use existing audio and continue <ChevronRight size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* STEP 3 — Transcription                                              */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {step === 3 && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Scissors size={18} className="text-indigo-400" /> Transcription
+          </h2>
+
+          {/* Transcribing state */}
+          {transcribing && (
+            <div className="card p-10 text-center">
+              <Loader2 size={36} className="animate-spin text-indigo-500 mx-auto mb-4" />
+              <p className="text-gray-200 font-medium">Transcribing audio…</p>
+              <p className="text-sm text-gray-500 mt-1.5">
+                AssemblyAI is processing your voiceover. This usually takes 30–90 seconds.
               </p>
+            </div>
+          )}
+
+          {/* Scenes list */}
+          {!transcribing && scenes.length > 0 && (
+            <>
+              <p className="text-sm text-gray-400">
+                {scenes.length} scenes detected. Review and adjust text or timing if needed.
+              </p>
+              <div className="space-y-2">
+                {scenes.map((scene, i) => (
+                  <TranscriptSceneCard
+                    key={scene.id}
+                    scene={scene}
+                    index={i}
+                    onUpdate={handleUpdateScene}
+                    onDelete={handleDeleteScene}
+                  />
+                ))}
+                <button
+                  onClick={handleAddScene}
+                  className="w-full p-2.5 border-2 border-dashed border-gray-800 rounded-xl text-gray-600 hover:border-gray-700 hover:text-gray-500 transition-colors text-sm flex items-center justify-center gap-2"
+                >
+                  <Plus size={15} /> Add Scene
+                </button>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setStep(2)} className="btn-secondary flex items-center gap-2">
+                  <ChevronLeft size={15} /> Back
+                </button>
+                <button
+                  onClick={handleGoToImages}
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                >
+                  Generate Images <ChevronRight size={15} />
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Empty / error state */}
+          {!transcribing && scenes.length === 0 && (
+            <div className="card p-8 text-center space-y-3">
+              <AlertCircle size={28} className="text-yellow-500 mx-auto" />
+              <p className="text-gray-400">No scenes detected. Try re-running transcription.</p>
               <button
-                onClick={handleTranscribe}
-                disabled={transcribing}
-                className="btn-primary w-full flex items-center justify-center gap-2"
+                onClick={() => { transcribeTriggered.current = true; handleTranscribe(); }}
+                className="btn-primary flex items-center justify-center gap-2 mx-auto"
               >
-                {transcribing
-                  ? <><Loader2 size={15} className="animate-spin" /> Transcribing… (this may take a minute)</>
-                  : <><Wand2 size={15} /> Transcribe & Generate Scenes</>}
+                <RefreshCw size={14} /> Retry Transcription
               </button>
             </div>
           )}
         </div>
       )}
 
-      {/* ── RENDER TAB ── */}
-      {activeTab === 'render' && (
-        <div className="max-w-xl space-y-4">
-          {/* Status */}
-          <div className="card p-4">
-            <h3 className="font-medium text-gray-200 mb-3 flex items-center gap-2"><Film size={16} className="text-indigo-400" /> Render Status</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between text-gray-400">
-                <span>Scenes</span>
-                <span className="text-gray-200">{scenes.length}</span>
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* STEP 4 — Image Generation                                           */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {step === 4 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Image size={18} className="text-indigo-400" /> Image Generation
+            </h2>
+            <span className="text-sm text-gray-500">{imagesReady}/{scenes.length} ready</span>
+          </div>
+
+          {/* Generation progress indicator */}
+          {(generatingPrompts || generatingAll) && (
+            <div className="card p-4 flex items-center gap-3">
+              <Loader2 size={18} className="animate-spin text-indigo-400 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm text-gray-300 font-medium">
+                  {generatingPrompts
+                    ? 'Generating image prompts…'
+                    : `Generating image ${genProgress.current} of ${genProgress.total}…`}
+                </div>
+                {!generatingPrompts && genProgress.total > 0 && (
+                  <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5">
+                    <div
+                      className="bg-indigo-600 h-1.5 rounded-full transition-all"
+                      style={{ width: `${(genProgress.current / genProgress.total) * 100}%` }}
+                    />
+                  </div>
+                )}
               </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Images Ready</span>
-                <span className={imagesReady === scenes.length ? 'text-green-400' : 'text-yellow-400'}>
-                  {imagesReady} / {scenes.length}
-                </span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Audio</span>
-                <span className={project.audio_filename ? 'text-green-400' : 'text-gray-600'}>
-                  {project.audio_filename || 'Not uploaded'}
-                </span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Est. Duration</span>
-                <span className="text-gray-200">{formatTime(totalDuration)}</span>
-              </div>
+            </div>
+          )}
+
+          {/* Resume button when generation was interrupted */}
+          {!generatingAll && !generatingPrompts && scenes.some(s => s.status !== 'generated') && imagesReady > 0 && (
+            <button
+              onClick={() => { autoGenTriggered.current = false; handleAutoGenerate(); }}
+              className="btn-secondary text-sm flex items-center gap-2"
+            >
+              <RefreshCw size={13} /> Resume Generation ({scenes.length - imagesReady} remaining)
+            </button>
+          )}
+
+          {/* Scene cards */}
+          <div className="space-y-3">
+            {scenes.map((scene, i) => (
+              <ImageSceneCard
+                key={scene.id}
+                scene={scene}
+                index={i}
+                onRegenerate={handleRegenerateImage}
+                generatingId={generatingId}
+              />
+            ))}
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button onClick={() => setStep(3)} className="btn-secondary flex items-center gap-2">
+              <ChevronLeft size={15} /> Back
+            </button>
+            <button
+              onClick={() => setStep(5)}
+              className="btn-primary flex-1 flex items-center justify-center gap-2"
+            >
+              Render Video <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* STEP 5 — Render & Download                                          */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {step === 5 && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Film size={18} className="text-indigo-400" /> Render & Download
+          </h2>
+
+          {/* Summary */}
+          <div className="card p-4 space-y-2 text-sm">
+            <div className="flex justify-between text-gray-400">
+              <span>Scenes</span>
+              <span className="text-gray-200">{scenes.length}</span>
+            </div>
+            <div className="flex justify-between text-gray-400">
+              <span>Images Ready</span>
+              <span className={imagesReady === scenes.length ? 'text-green-400' : 'text-yellow-400'}>
+                {imagesReady}/{scenes.length}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-400">
+              <span>Audio</span>
+              <span className={project.audio_filename ? 'text-green-400' : 'text-red-400'}>
+                {project.audio_filename || 'Missing'}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-400">
+              <span>Est. Duration</span>
+              <span className="text-gray-200">{formatTime(totalDuration)}</span>
             </div>
           </div>
 
-          {/* Placeholder option */}
+          {/* Placeholder toggle when some images are missing */}
           {imagesReady < scenes.length && (
             <label className="card p-3 flex items-center gap-3 cursor-pointer hover:border-gray-700 transition-colors">
               <input
                 type="checkbox"
                 checked={usePlaceholders}
                 onChange={e => setUsePlaceholders(e.target.checked)}
-                className="w-4 h-4 accent-indigo-500"
+                className="w-4 h-4 accent-indigo-500 flex-shrink-0"
               />
               <div>
                 <div className="text-sm text-gray-300">Use placeholder images for missing scenes</div>
-                <div className="text-xs text-gray-600">Renders with colored frames where images aren't ready yet</div>
+                <div className="text-xs text-gray-600">Renders with colored frames where images aren't ready</div>
               </div>
             </label>
           )}
@@ -572,9 +808,9 @@ export default function ProjectDetail() {
                 <span className="text-sm font-medium text-gray-300 capitalize">{renderProgress.status}</span>
                 <span className="text-sm text-indigo-400">{renderProgress.progress}%</span>
               </div>
-              <div className="w-full bg-gray-800 rounded-full h-2">
+              <div className="w-full bg-gray-800 rounded-full h-2.5">
                 <div
-                  className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+                  className="bg-indigo-600 h-2.5 rounded-full transition-all duration-500"
                   style={{ width: `${renderProgress.progress}%` }}
                 />
               </div>
@@ -589,38 +825,42 @@ export default function ProjectDetail() {
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-3">
-            <button
-              onClick={handleStartRender}
-              disabled={!project.audio_filename || (imagesReady === 0 && !usePlaceholders) || renderProgress?.status === 'processing'}
-              className="btn-primary flex-1 flex items-center justify-center gap-2"
-            >
-              {renderProgress?.status === 'processing'
-                ? <><Loader2 size={16} className="animate-spin" /> Rendering…</>
-                : <><Play size={16} /> Start Render</>}
-            </button>
-            {project.status === 'complete' && (
-              <a
-                href={api.downloadUrl(id)}
-                className="btn-secondary flex items-center gap-2"
-                download
-              >
-                <Download size={16} /> Download MP4
-              </a>
-            )}
-          </div>
-
+          {/* Warnings */}
           {!project.audio_filename && (
             <p className="text-xs text-yellow-500 flex items-center gap-1.5">
-              <AlertCircle size={13} /> Upload audio first before rendering
+              <AlertCircle size={13} /> Audio is required before rendering
             </p>
           )}
-          {imagesReady === 0 && !usePlaceholders && (
-            <p className="text-xs text-yellow-500 flex items-center gap-1.5">
-              <AlertCircle size={13} /> Generate at least one image or enable placeholder mode
-            </p>
-          )}
+
+          {/* Actions */}
+          <div className="flex gap-3">
+            <button onClick={() => setStep(4)} className="btn-secondary flex items-center gap-2">
+              <ChevronLeft size={15} /> Back
+            </button>
+            {project.status === 'complete' ? (
+              <a
+                href={api.downloadUrl(id)}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+                download={`${project.title}.mp4`}
+              >
+                <Download size={15} /> Download {project.title}.mp4
+              </a>
+            ) : (
+              <button
+                onClick={handleStartRender}
+                disabled={
+                  !project.audio_filename ||
+                  (imagesReady === 0 && !usePlaceholders) ||
+                  renderProgress?.status === 'processing'
+                }
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                {renderProgress?.status === 'processing'
+                  ? <><Loader2 size={15} className="animate-spin" /> Rendering…</>
+                  : <><Play size={15} /> Start Render</>}
+              </button>
+            )}
+          </div>
 
           <div className="card p-4 bg-gray-900/30 text-xs text-gray-500 space-y-1">
             <p className="font-medium text-gray-400">What gets exported:</p>
@@ -631,6 +871,7 @@ export default function ProjectDetail() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

@@ -9,5 +9,10 @@
     "healthcheckPath": "/api/health",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
+  },
+  "_volumeSetup": {
+    "note": "To persist data on Railway: create a Volume in the Railway dashboard, mount it at /data, then set these env vars in your service:",
+    "DATABASE_PATH": "/data/hntr-automation.db",
+    "UPLOADS_PATH": "/data/uploads"
   }
 }

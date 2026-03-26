@@ -2,7 +2,11 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'hntr-automation.db');
+// On Railway, use DATABASE_PATH env var (pointing to a persistent volume).
+// Detect Railway environment and default to /data/hntr-automation.db.
+// Locally, fall back to server/hntr-automation.db.
+const DB_PATH = process.env.DATABASE_PATH
+  || (process.env.RAILWAY_ENVIRONMENT ? '/data/hntr-automation.db' : path.join(__dirname, '..', 'hntr-automation.db'));
 let db;
 
 function getDb() {

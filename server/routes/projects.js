@@ -8,7 +8,8 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+// Use UPLOADS_PATH set by server/index.js (persistent on Railway), fallback local
+const UPLOADS_DIR = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -90,18 +91,19 @@ router.put('/:id', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const { title, script, style, status, notes, assigned_to } = req.body;
+  const { title, script, style, style_id, status, notes, assigned_to } = req.body;
   db.prepare(`
     UPDATE projects SET
       title = COALESCE(?, title),
       script = COALESCE(?, script),
       style = COALESCE(?, style),
+      style_id = COALESCE(?, style_id),
       status = COALESCE(?, status),
       notes = COALESCE(?, notes),
       assigned_to = COALESCE(?, assigned_to),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(title, script, style, status, notes, assigned_to, req.params.id);
+  `).run(title, script, style, style_id ?? null, status, notes, assigned_to, req.params.id);
 
   const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   res.json(updated);
@@ -158,6 +160,23 @@ router.post('/:id/upload-audio', authMiddleware, (req, res) => {
 // POST /api/projects/:id/transcribe — run AssemblyAI on uploaded audio
 router.post('/:id/transcribe', authMiddleware, async (req, res) => {
   const db = getDb();
+
+  // Safety: ensure required columns exist (guard against partial migrations)
+  const requiredProjectCols = ['started_at', 'audio_path', 'audio_filename'];
+  const projectCols = db.pragma('table_info(projects)').map(c => c.name);
+  for (const col of requiredProjectCols) {
+    if (!projectCols.includes(col)) {
+      try { db.exec(`ALTER TABLE projects ADD COLUMN ${col} ${col === 'started_at' ? 'DATETIME' : 'TEXT'}`); } catch {}
+    }
+  }
+  const requiredSceneCols = ['start_time', 'end_time', 'duration', 'image_url', 'image_prompt'];
+  const sceneCols = db.pragma('table_info(scenes)').map(c => c.name);
+  for (const col of requiredSceneCols) {
+    if (!sceneCols.includes(col)) {
+      try { db.exec(`ALTER TABLE scenes ADD COLUMN ${col} ${col.includes('time') || col === 'duration' ? 'REAL DEFAULT 0' : 'TEXT DEFAULT \\'\\''}`); } catch {}
+    }
+  }
+
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
