@@ -34,7 +34,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
-        <Route index element={user?.role === 'admin' ? <Navigate to="/admin" replace /> : <Dashboard />} />
+        <Route index element={<Dashboard />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         <Route path="projects/new" element={<NewProject />} />
