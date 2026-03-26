@@ -36,6 +36,7 @@ app.use('/api/render', require('./routes/render'));
 app.use('/api/settings', require('./routes/settings'));
 
 // Health check
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // Serve React frontend in production

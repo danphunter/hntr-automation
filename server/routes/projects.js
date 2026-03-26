@@ -122,11 +122,13 @@ router.delete('/:id', authMiddleware, (req, res) => {
 
 // POST /api/projects/:id/upload-audio
 router.post('/:id/upload-audio', authMiddleware, (req, res) => {
+  console.log('Upload request received for project:', req.params.id);
   upload.single('audio')(req, res, (err) => {
     if (err) {
-      console.error('Audio upload error:', err);
+      console.error('Multer error:', err);
       return res.status(400).json({ error: err.message || 'Upload failed' });
     }
+    console.log('Upload request received, file size:', req.file?.size);
     if (!req.file) return res.status(400).json({ error: 'No audio file received' });
 
     try {
