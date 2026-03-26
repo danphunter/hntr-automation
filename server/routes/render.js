@@ -207,7 +207,8 @@ router.get('/download/:projectId', authMiddleware, (req, res) => {
     return res.status(404).json({ error: 'No render available' });
   }
 
-  const filename = `${project.title.replace(/[^a-z0-9]/gi, '_')}_rough_cut.mp4`;
+  const sanitized = project.title.replace(/[\\/:*?"<>|]/g, '-').trim();
+  const filename = `${sanitized}.mp4`;
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.setHeader('Content-Type', 'video/mp4');
   res.sendFile(project.render_path);
