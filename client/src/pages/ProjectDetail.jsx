@@ -283,14 +283,36 @@ export default function ProjectDetail() {
     setTranscribing(true);
     setError('');
     try {
-      const result = await api.transcribeAudio(id);
-      setScenes(result.scenes || []);
-      await loadProject();
+      // Start the job (returns immediately with { status: 'processing', jobId })
+      await api.transcribeAudio(id);
+
+      // Poll every 3 seconds until done
+      await new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            const result = await api.getTranscribeStatus(id);
+            if (result.status === 'completed') {
+              clearInterval(interval);
+              setScenes(result.scenes || []);
+              await loadProject();
+              resolve();
+            } else if (result.status === 'error') {
+              clearInterval(interval);
+              reject(new Error(result.message || 'Transcription failed'));
+            }
+            // else still processing — keep polling
+          } catch (e) {
+            clearInterval(interval);
+            reject(e);
+          }
+        }, 3000);
+      });
     } catch (err) {
       setError(err.message);
       transcribeTriggered.current = false;
+    } finally {
+      setTranscribing(false);
     }
-    finally { setTranscribing(false); }
   }
 
   function handleUpdateScene(sceneId, updates) {

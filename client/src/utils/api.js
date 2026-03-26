@@ -46,6 +46,7 @@ export const api = {
     return request('POST', `/projects/${id}/upload-audio`, fd, true);
   },
   transcribeAudio: (id, overrideScript = true) => request('POST', `/projects/${id}/transcribe`, { overrideScript }),
+  getTranscribeStatus: (id) => request('GET', `/projects/${id}/transcribe-status`),
   saveScenes: (id, scenes) => request('POST', `/projects/${id}/scenes`, { scenes }),
   updateScene: (projectId, sceneId, data) => request('PUT', `/projects/${projectId}/scenes/${sceneId}`, data),
 

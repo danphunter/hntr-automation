@@ -157,23 +157,18 @@ router.post('/:id/upload-audio', authMiddleware, (req, res) => {
   });
 });
 
-// POST /api/projects/:id/transcribe — run AssemblyAI on uploaded audio
+// POST /api/projects/:id/transcribe — upload audio to AssemblyAI and start job (async)
 router.post('/:id/transcribe', authMiddleware, async (req, res) => {
   const db = getDb();
 
-  // Safety: ensure required columns exist (guard against partial migrations)
-  const requiredProjectCols = ['started_at', 'audio_path', 'audio_filename'];
-  const projectCols = db.pragma('table_info(projects)').map(c => c.name);
-  for (const col of requiredProjectCols) {
-    if (!projectCols.includes(col)) {
-      try { db.exec(`ALTER TABLE projects ADD COLUMN ${col} ${col === 'started_at' ? 'DATETIME' : 'TEXT'}`); } catch {}
-    }
-  }
-  try { db.exec("ALTER TABLE scenes ADD COLUMN image_url TEXT DEFAULT ''"); } catch(e) {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN image_prompt TEXT DEFAULT ''"); } catch(e) {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0"); } catch(e) {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN end_time REAL DEFAULT 0"); } catch(e) {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN duration REAL DEFAULT 0"); } catch(e) {}
+  // Ensure required columns exist
+  try { db.exec("ALTER TABLE projects ADD COLUMN transcribe_job_id TEXT"); } catch {}
+  try { db.exec("ALTER TABLE projects ADD COLUMN transcribe_status TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN image_url TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN image_prompt TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN end_time REAL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN duration REAL DEFAULT 0"); } catch {}
 
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
@@ -205,7 +200,7 @@ router.post('/:id/transcribe', authMiddleware, async (req, res) => {
     }
     const { upload_url } = await uploadRes.json();
 
-    // 2. Start transcription job
+    // 2. Start transcription job (do NOT wait for completion)
     const jobRes = await fetch('https://api.assemblyai.com/v2/transcript', {
       method: 'POST',
       headers: { authorization: apiKey, 'content-type': 'application/json' },
@@ -217,31 +212,63 @@ router.post('/:id/transcribe', authMiddleware, async (req, res) => {
     }
     const { id: jobId } = await jobRes.json();
 
-    // 3. Poll until complete (up to 3 minutes)
-    let transcript = null;
-    const deadline = Date.now() + 3 * 60 * 1000;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 3000));
-      const statusRes = await fetch(`https://api.assemblyai.com/v2/transcript/${jobId}`, {
-        headers: { authorization: apiKey },
-      });
-      const data = await statusRes.json();
-      if (data.status === 'completed') { transcript = data; break; }
-      if (data.status === 'error') throw new Error(`AssemblyAI error: ${data.error}`);
+    // 3. Save job ID and mark as processing — return immediately
+    db.prepare(`UPDATE projects SET transcribe_job_id = ?, transcribe_status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(jobId, req.params.id);
+
+    res.json({ status: 'processing', jobId });
+  } catch (err) {
+    console.error('Transcription start error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/projects/:id/transcribe-status — check transcription progress
+router.get('/:id/transcribe-status', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  if (!project.transcribe_job_id) {
+    return res.status(400).json({ error: 'No transcription job started' });
+  }
+  if (project.transcribe_status === 'completed') {
+    // Already processed — return saved scenes
+    const savedScenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.id);
+    return res.json({ status: 'completed', scenes: savedScenes });
+  }
+
+  const settings = db.prepare('SELECT key, value FROM settings').all();
+  const apiKey = Object.fromEntries(settings.map(r => [r.key, r.value])).assemblyai_api_key;
+  if (!apiKey) return res.status(400).json({ error: 'AssemblyAI API key not configured' });
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const statusRes = await fetch(`https://api.assemblyai.com/v2/transcript/${project.transcribe_job_id}`, {
+      headers: { authorization: apiKey },
+    });
+    const data = await statusRes.json();
+
+    if (data.status === 'error') {
+      db.prepare(`UPDATE projects SET transcribe_status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(req.params.id);
+      return res.json({ status: 'error', message: data.error });
     }
-    if (!transcript) throw new Error('AssemblyAI transcription timed out after 3 minutes');
 
-    // 4. Build scenes from word-level timestamps
-    const scenes = buildScenesFromTranscript(transcript);
+    if (data.status !== 'completed') {
+      return res.json({ status: 'processing' });
+    }
 
-    // 5. Update project script (only if no existing script, or if caller requested override)
-    const overrideScript = req.body?.overrideScript !== false;
+    // Completed — process into scenes and save
+    const scenes = buildScenesFromTranscript(data);
+
+    const overrideScript = req.query.overrideScript !== 'false';
     if (overrideScript || !project.script?.trim()) {
-      db.prepare('UPDATE projects SET script = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(transcript.text, req.params.id);
+      db.prepare('UPDATE projects SET script = ? WHERE id = ?').run(data.text, req.params.id);
     }
 
-    // 6. Replace scenes with transcript-based scenes
     db.prepare('DELETE FROM scenes WHERE project_id = ?').run(req.params.id);
     const insert = db.prepare(`
       INSERT INTO scenes (id, project_id, scene_order, text, start_time, end_time, duration, image_prompt, image_url, status)
@@ -251,14 +278,14 @@ router.post('/:id/transcribe', authMiddleware, async (req, res) => {
       sceneList.forEach((s, i) => insert.run(uuidv4(), req.params.id, i, s.text, s.start_time, s.end_time, s.duration));
     })(scenes);
 
-    db.prepare(`UPDATE projects SET status = 'in_progress', updated_at = CURRENT_TIMESTAMP,
+    db.prepare(`UPDATE projects SET transcribe_status = 'completed', status = 'in_progress', updated_at = CURRENT_TIMESTAMP,
       started_at = CASE WHEN started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END
       WHERE id = ?`).run(req.params.id);
 
     const savedScenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.id);
-    res.json({ transcript: transcript.text, scenes: savedScenes });
+    res.json({ status: 'completed', scenes: savedScenes });
   } catch (err) {
-    console.error('Transcription error:', err);
+    console.error('Transcription status error:', err);
     res.status(500).json({ error: err.message });
   }
 });

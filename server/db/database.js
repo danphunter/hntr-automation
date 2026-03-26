@@ -135,6 +135,8 @@ function initDb() {
     "ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0",
     "ALTER TABLE scenes ADD COLUMN end_time REAL DEFAULT 5",
     "ALTER TABLE scenes ADD COLUMN duration REAL DEFAULT 5",
+    "ALTER TABLE projects ADD COLUMN transcribe_job_id TEXT",
+    "ALTER TABLE projects ADD COLUMN transcribe_status TEXT DEFAULT ''",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
