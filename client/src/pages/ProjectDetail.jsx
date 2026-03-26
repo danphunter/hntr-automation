@@ -167,6 +167,8 @@ export default function ProjectDetail() {
   const [uploadingAudio, setUploadingAudio] = useState(false);
   const [usePlaceholders, setUsePlaceholders] = useState(false);
   const [error, setError] = useState('');
+  const [transcribeSyncing, setTranscribeSyncing] = useState(false);
+  const [timingSynced, setTimingSynced] = useState(false);
   const pollRef = useRef(null);
 
   async function loadProject() {
@@ -270,6 +272,7 @@ export default function ProjectDetail() {
             setScenes(prev => prev.map(s => s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s));
           } catch (err) {
             setError(`Scene ${scene.scene_order + 1}: ${err.message}`);
+            setGeneratingId(null);
           }
         }
       }
@@ -286,12 +289,33 @@ export default function ProjectDetail() {
       await api.uploadAudio(id, audioFile);
       await loadProject();
       setAudioFile(null);
-    } catch (err) { setError(err.message); }
+    } catch (err) { setError(err.message); return; }
     finally { setUploadingAudio(false); }
+
+    // Auto-sync timing via AssemblyAI in the background after upload
+    setTranscribeSyncing(true);
+    setTimingSynced(false);
+    try {
+      const result = await api.transcribeAudio(id);
+      setScenes(result.scenes);
+      setTimingSynced(true);
+      setTimeout(() => setTimingSynced(false), 4000);
+    } catch (err) {
+      // Timing sync failure is non-fatal — editor can proceed without it
+      console.warn('AssemblyAI auto-sync failed:', err.message);
+    } finally {
+      setTranscribeSyncing(false);
+    }
   }
 
   async function handleStartRender() {
     setError('');
+    // Bug fix 3: validate at least one image exists before starting render
+    const hasAnyImage = scenes.some(s => s.image_url);
+    if (!hasAnyImage && !usePlaceholders) {
+      setError('Generate at least one image or enable placeholder mode before rendering.');
+      return;
+    }
     try {
       await handleSaveScenes();
       const result = await api.startRender(id, usePlaceholders);
@@ -364,6 +388,18 @@ export default function ProjectDetail() {
           <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
           <span>{error}</span>
           <button onClick={() => setError('')} className="ml-auto text-red-600 hover:text-red-400"><X size={14} /></button>
+        </div>
+      )}
+      {transcribeSyncing && (
+        <div className="flex items-center gap-2 text-indigo-300 text-sm bg-indigo-900/20 border border-indigo-800/40 rounded-lg p-3 mb-4">
+          <Loader2 size={15} className="animate-spin flex-shrink-0" />
+          <span>Syncing scene timings from audio via AssemblyAI…</span>
+        </div>
+      )}
+      {timingSynced && (
+        <div className="flex items-center gap-2 text-green-300 text-sm bg-green-900/20 border border-green-800/40 rounded-lg p-3 mb-4">
+          <CheckCircle2 size={15} className="flex-shrink-0" />
+          <span>Timing synced — scene start/end times updated from voiceover.</span>
         </div>
       )}
 

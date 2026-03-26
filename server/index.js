@@ -26,6 +26,7 @@ app.use('/api/styles', require('./routes/styles'));
 app.use('/api/generate', require('./routes/generate'));
 app.use('/api/render', require('./routes/render'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/projects', require('./routes/transcribe'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));

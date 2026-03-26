@@ -4,7 +4,7 @@ import { api } from '../utils/api';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Users, Video, CheckCircle2, Film, Clock, Loader2,
-  TrendingUp, Plus, AlertCircle, UserPlus, Trash2, X,
+  TrendingUp, Plus, AlertCircle, UserPlus, Trash2, X, RotateCcw,
 } from 'lucide-react';
 
 const STATUS_COLORS = {
@@ -100,6 +100,12 @@ export default function AdminDashboard() {
     setUsers(u => u.filter(x => x.id !== id));
   }
 
+  async function handleResetStatus(projectId, title) {
+    if (!confirm(`Reset "${title}" back to draft? This clears the stuck rendering status.`)) return;
+    await api.resetProjectStatus(projectId);
+    await loadData();
+  }
+
   if (loading) return (
     <div className="flex items-center justify-center py-24">
       <Loader2 size={32} className="animate-spin text-indigo-500" />
@@ -173,19 +179,26 @@ export default function AdminDashboard() {
           </div>
           <div className="space-y-2">
             {stats?.recentProjects?.map(p => (
-              <Link
-                key={p.id}
-                to={`/projects/${p.id}`}
-                className="card p-3 flex items-center gap-3 hover:border-gray-700 transition-colors block"
-              >
-                <div className="flex-1 min-w-0">
+              <div key={p.id} className="card p-3 flex items-center gap-3 hover:border-gray-700 transition-colors">
+                <Link to={`/projects/${p.id}`} className="flex-1 min-w-0 block">
                   <div className="text-sm font-medium text-gray-200 truncate">{p.title}</div>
                   <div className="text-xs text-gray-500 mt-0.5">{p.editor_name} · {new Date(p.created_at).toLocaleDateString()}</div>
+                </Link>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[p.status] || STATUS_COLORS.draft}`}>
+                    {p.status?.replace('_', ' ')}
+                  </span>
+                  {p.status === 'rendering' && (
+                    <button
+                      onClick={() => handleResetStatus(p.id, p.title)}
+                      title="Reset stuck render back to draft"
+                      className="text-yellow-600 hover:text-yellow-400 transition-colors"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  )}
                 </div>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[p.status] || STATUS_COLORS.draft}`}>
-                  {p.status?.replace('_', ' ')}
-                </span>
-              </Link>
+              </div>
             ))}
             {!stats?.recentProjects?.length && (
               <div className="card p-8 text-center text-gray-600">

@@ -189,6 +189,17 @@ router.post('/:id/scenes', authMiddleware, (req, res) => {
   res.json(saved);
 });
 
+// POST /api/projects/:id/reset-status — admin only, resets stuck projects back to draft
+router.post('/:id/reset-status', authMiddleware, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  const db = getDb();
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE projects SET status = 'draft', render_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .run(req.params.id);
+  res.json({ success: true });
+});
+
 // PUT /api/projects/:id/scenes/:sceneId
 router.put('/:id/scenes/:sceneId', authMiddleware, (req, res) => {
   const db = getDb();

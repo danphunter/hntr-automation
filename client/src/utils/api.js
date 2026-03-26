@@ -47,6 +47,8 @@ export const api = {
   },
   saveScenes: (id, scenes) => request('POST', `/projects/${id}/scenes`, { scenes }),
   updateScene: (projectId, sceneId, data) => request('PUT', `/projects/${projectId}/scenes/${sceneId}`, data),
+  resetProjectStatus: (id) => request('POST', `/projects/${id}/reset-status`),
+  transcribeAudio: (id) => request('POST', `/projects/${id}/transcribe`),
 
   // Styles
   getStyles: () => request('GET', '/styles'),
