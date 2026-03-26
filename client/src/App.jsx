@@ -39,7 +39,7 @@ function AppRoutes() {
         <Route path="admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         <Route path="projects/new" element={<NewProject />} />
         <Route path="projects/:id" element={<ProjectDetail />} />
-        <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
+        <Route path="settings" element={<Settings />} />
         <Route path="styles" element={<AdminRoute><StylesManager /></AdminRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

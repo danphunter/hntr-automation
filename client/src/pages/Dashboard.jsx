@@ -4,8 +4,8 @@ import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
-  Plus, Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Search, Download, Image, FolderPlus,
+  Video, Clock, CheckCircle2, Loader2, AlertCircle,
+  Film, Download, Image, FolderPlus,
 } from 'lucide-react';
 
 function formatDuration(startIso, endIso) {
@@ -42,7 +42,6 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
 
   useEffect(() => {
     api.getProjects()
@@ -56,11 +55,6 @@ export default function Dashboard() {
     return Date.now() - d.getTime() < 7 * 24 * 60 * 60 * 1000;
   });
   const completed = projects.filter(p => p.status === 'complete');
-
-  const filtered = projects.filter(p =>
-    p.title.toLowerCase().includes(search.toLowerCase()) ||
-    (p.notes || '').toLowerCase().includes(search.toLowerCase())
-  );
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -90,19 +84,14 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Header row */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input
-            className="input pl-9 text-sm"
-            placeholder="Search projects…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-        <Link to="/projects/new" className="btn-primary flex items-center gap-2 whitespace-nowrap">
-          <Plus size={16} /> New Project
+      {/* New Project button — centered and prominent */}
+      <div className="flex justify-center mb-8">
+        <Link
+          to="/projects/new"
+          className="flex items-center gap-3 px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-lg rounded-xl shadow-lg shadow-indigo-900/40 transition-all hover:scale-105 active:scale-100"
+        >
+          <FolderPlus size={24} />
+          New Project
         </Link>
       </div>
 
@@ -112,29 +101,14 @@ export default function Dashboard() {
           <Loader2 size={32} className="animate-spin mx-auto mb-3" />
           Loading projects…
         </div>
-      ) : filtered.length === 0 ? (
-        search ? (
-          <div className="card p-12 text-center">
-            <Video size={40} className="text-gray-700 mx-auto mb-4" />
-            <p className="text-gray-400 font-medium">No projects match your search</p>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-32">
-            <Link
-              to="/projects/new"
-              className="flex flex-col items-center gap-4 group hover:opacity-90 transition-opacity"
-            >
-              <div className="w-24 h-24 rounded-2xl bg-indigo-600/20 border-2 border-dashed border-indigo-600/40 group-hover:border-indigo-500 group-hover:bg-indigo-600/30 flex items-center justify-center transition-all">
-                <FolderPlus size={40} className="text-indigo-400 group-hover:text-indigo-300" />
-              </div>
-              <span className="text-lg font-semibold text-gray-300 group-hover:text-white">New Project</span>
-              <span className="text-sm text-gray-600">Click to create your first video project</span>
-            </Link>
-          </div>
-        )
+      ) : projects.length === 0 ? (
+        <div className="card p-12 text-center">
+          <Video size={40} className="text-gray-700 mx-auto mb-4" />
+          <p className="text-gray-400 font-medium">No projects yet — click New Project to get started</p>
+        </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(p => {
+          {projects.map(p => {
             const timeTaken = formatDuration(p.started_at, p.completed_at);
             return (
               <div key={p.id} className="card p-4 flex items-center gap-4 hover:border-gray-700 hover:bg-gray-900/80 transition-all group">
