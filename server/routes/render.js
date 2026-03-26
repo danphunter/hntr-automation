@@ -81,7 +81,19 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
       let imgPath = scene.image_path;
+
+      // If image_path doesn't resolve, try deriving path from image_url
       if (!imgPath || !fs.existsSync(imgPath)) {
+        if (scene.image_url) {
+          // image_url is like /api/generate/image-file/<filename>
+          const filename = scene.image_url.split('/').pop();
+          const derived = path.join(IMAGES_DIR, filename);
+          if (fs.existsSync(derived)) imgPath = derived;
+        }
+      }
+
+      if (!imgPath || !fs.existsSync(imgPath)) {
+        // Genuine fallback — no image available
         imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
       }
       scenePaths.push({ path: imgPath, duration: Math.max(scene.duration || 5, 1) });
@@ -98,8 +110,8 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
 
       const frames = Math.ceil(dur * FPS);
       const zoomDir = i % 2 === 0 ? 'in' : 'out';
-      const startZoom = zoomDir === 'in' ? 1.0 : 1.3;
-      const endZoom = zoomDir === 'in' ? 1.3 : 1.0;
+      const startZoom = zoomDir === 'in' ? 1.0 : 1.05;
+      const endZoom = zoomDir === 'in' ? 1.05 : 1.0;
       const zoomStep = (endZoom - startZoom) / frames;
       const zoomExpr = zoomDir === 'in'
         ? `min(zoom+${zoomStep.toFixed(6)},${endZoom})`
