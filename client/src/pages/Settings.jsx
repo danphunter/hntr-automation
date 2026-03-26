@@ -198,10 +198,10 @@ export default function Settings() {
           </p>
         </Section>
 
-        <Section title="Image Generation — DALL-E Fallback">
+        <Section title="Prompt Generation — GPT-4o-mini">
           <ApiKeyField label="OpenAI API Key (optional)" keyName="openai_api_key" values={values} onChange={onChange} hint="sk-... (optional)" />
           <p className="text-xs text-gray-500">
-            DALL-E 3 is used as a fallback if all Whisk tokens are exhausted. Whisk is the primary image generator — no key required for normal use.
+            Used by GPT-4o-mini to auto-generate vivid image prompts from scene text. If omitted, basic prompts are generated without AI.
           </p>
         </Section>
 

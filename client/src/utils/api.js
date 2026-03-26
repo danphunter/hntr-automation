@@ -45,6 +45,7 @@ export const api = {
     fd.append('audio', file);
     return request('POST', `/projects/${id}/upload-audio`, fd, true);
   },
+  transcribeAudio: (id, overrideScript = true) => request('POST', `/projects/${id}/transcribe`, { overrideScript }),
   saveScenes: (id, scenes) => request('POST', `/projects/${id}/scenes`, { scenes }),
   updateScene: (projectId, sceneId, data) => request('PUT', `/projects/${projectId}/scenes/${sceneId}`, data),
 
@@ -54,10 +55,11 @@ export const api = {
   createStyle: (data) => request('POST', '/styles', data),
   updateStyle: (id, data) => request('PUT', `/styles/${id}`, data),
   deleteStyle: (id) => request('DELETE', `/styles/${id}`),
-  uploadStyleRef: (styleId, file, description) => {
+  uploadStyleRef: (styleId, file, description, referenceType = 'subject') => {
     const fd = new FormData();
     fd.append('image', file);
     fd.append('description', description || '');
+    fd.append('reference_type', referenceType);
     return request('POST', `/styles/${styleId}/references`, fd, true);
   },
   deleteStyleRef: (refId) => request('DELETE', `/styles/references/${refId}`),

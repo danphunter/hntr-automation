@@ -121,6 +121,7 @@ function initDb() {
     "ALTER TABLE projects ADD COLUMN started_at DATETIME",
     "ALTER TABLE projects ADD COLUMN completed_at DATETIME",
     "ALTER TABLE styles ADD COLUMN scene_pattern TEXT DEFAULT '[\"image\"]'",
+    "ALTER TABLE style_references ADD COLUMN reference_type TEXT DEFAULT 'subject'",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}

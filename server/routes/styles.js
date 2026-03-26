@@ -97,22 +97,23 @@ router.delete('/:id', authMiddleware, adminOnly, (req, res) => {
   res.json({ success: true });
 });
 
-// POST /api/styles/:id/references — upload character reference image (admin only)
+// POST /api/styles/:id/references — upload subject or style reference image (admin only)
 router.post('/:id/references', authMiddleware, adminOnly, uploadRef.single('image'), (req, res) => {
   const db = getDb();
   const style = db.prepare('SELECT id FROM styles WHERE id = ?').get(req.params.id);
   if (!style) return res.status(404).json({ error: 'Style not found' });
 
   const id = uuidv4();
+  const refType = ['subject', 'style'].includes(req.body.reference_type) ? req.body.reference_type : 'subject';
   db.prepare(`
-    INSERT INTO style_references (id, style_id, filename, original_name, file_path, description)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, req.params.id, req.file.filename, req.file.originalname, req.file.path, req.body.description || '');
+    INSERT INTO style_references (id, style_id, filename, original_name, file_path, description, reference_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, req.params.id, req.file.filename, req.file.originalname, req.file.path, req.body.description || '', refType);
 
   res.status(201).json({
     id, style_id: req.params.id, filename: req.file.filename,
     original_name: req.file.originalname, url: `/api/styles/references/${id}/image`,
-    description: req.body.description || '',
+    description: req.body.description || '', reference_type: refType,
   });
 });
 

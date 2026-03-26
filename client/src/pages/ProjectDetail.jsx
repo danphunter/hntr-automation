@@ -165,6 +165,7 @@ export default function ProjectDetail() {
   const [renderProgress, setRenderProgress] = useState(null);
   const [audioFile, setAudioFile] = useState(null);
   const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [usePlaceholders, setUsePlaceholders] = useState(false);
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -282,12 +283,24 @@ export default function ProjectDetail() {
   async function handleUploadAudio() {
     if (!audioFile) return;
     setUploadingAudio(true);
+    setError('');
     try {
       await api.uploadAudio(id, audioFile);
       await loadProject();
       setAudioFile(null);
     } catch (err) { setError(err.message); }
     finally { setUploadingAudio(false); }
+  }
+
+  async function handleTranscribe() {
+    setTranscribing(true);
+    setError('');
+    try {
+      const result = await api.transcribeAudio(id);
+      setScenes(result.scenes || []);
+      await loadProject();
+    } catch (err) { setError(err.message); }
+    finally { setTranscribing(false); }
   }
 
   async function handleStartRender() {
@@ -483,6 +496,26 @@ export default function ProjectDetail() {
               {uploadingAudio ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Upload size={15} /> Upload Audio</>}
             </button>
           </div>
+
+          {project.audio_filename && (
+            <div className="card p-4">
+              <h3 className="font-medium text-gray-200 mb-1 flex items-center gap-2">
+                <Wand2 size={15} className="text-indigo-400" /> Auto-Transcribe to Scenes
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Uses AssemblyAI to transcribe the voiceover and automatically create scenes with accurate timestamps. This replaces any existing scenes.
+              </p>
+              <button
+                onClick={handleTranscribe}
+                disabled={transcribing}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {transcribing
+                  ? <><Loader2 size={15} className="animate-spin" /> Transcribing… (this may take a minute)</>
+                  : <><Wand2 size={15} /> Transcribe & Generate Scenes</>}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

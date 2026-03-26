@@ -164,15 +164,14 @@ function StyleModal({ style, onClose, onSaved }) {
   );
 }
 
-function ReferenceImages({ style, onUpdated }) {
+function RefSlot({ label, hint, refType, refs, styleId, onUpdated }) {
   const [uploading, setUploading] = useState(false);
-  const [desc, setDesc] = useState('');
+  const filtered = (refs || []).filter(r => (r.reference_type || 'subject') === refType);
 
   async function handleUpload(file) {
     setUploading(true);
     try {
-      await api.uploadStyleRef(style.id, file, desc);
-      setDesc('');
+      await api.uploadStyleRef(styleId, file, '', refType);
       onUpdated();
     } catch (err) { alert(err.message); }
     finally { setUploading(false); }
@@ -185,19 +184,17 @@ function ReferenceImages({ style, onUpdated }) {
   }
 
   return (
-    <div className="mt-3 border-t border-gray-800 pt-3">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-        <Image size={12} /> Character Reference Images
-      </p>
-
-      <div className="flex gap-2 flex-wrap mb-2">
-        {(style.references || []).map(ref => (
+    <div>
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">{label}</p>
+      <p className="text-xs text-gray-700 mb-2">{hint}</p>
+      <div className="flex gap-2 flex-wrap">
+        {filtered.map(ref => (
           <div key={ref.id} className="relative group">
             <img
               src={ref.url}
-              alt={ref.description || ref.original_name}
+              alt={ref.original_name}
               className="w-16 h-16 object-cover rounded-lg border border-gray-700"
-              title={ref.description || ref.original_name}
+              title={ref.original_name}
             />
             <button
               onClick={() => handleDelete(ref.id)}
@@ -207,15 +204,39 @@ function ReferenceImages({ style, onUpdated }) {
             </button>
           </div>
         ))}
-
+        {filtered.length === 0 && (
+          <div className="w-16 h-16 rounded-lg border border-dashed border-gray-800 flex items-center justify-center text-gray-700">
+            <Image size={16} />
+          </div>
+        )}
         <label className={`w-16 h-16 border-2 border-dashed border-gray-700 rounded-lg flex items-center justify-center cursor-pointer hover:border-gray-600 hover:bg-gray-800/30 transition-all ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
           {uploading ? <Loader2 size={16} className="animate-spin text-gray-600" /> : <Plus size={18} className="text-gray-600" />}
           <input type="file" accept="image/*" className="hidden" onChange={e => e.target.files[0] && handleUpload(e.target.files[0])} />
         </label>
       </div>
+    </div>
+  );
+}
 
-      <input className="input text-xs" placeholder="Description for next upload (optional)" value={desc} onChange={e => setDesc(e.target.value)} />
-      <p className="text-xs text-gray-700 mt-1">These images are passed to the image generator to maintain character consistency across all scenes in this style.</p>
+function ReferenceImages({ style, onUpdated }) {
+  return (
+    <div className="mt-3 border-t border-gray-800 pt-3 space-y-4">
+      <RefSlot
+        label="Subject Reference"
+        hint="Character / subject consistency — who appears in scenes."
+        refType="subject"
+        refs={style.references}
+        styleId={style.id}
+        onUpdated={onUpdated}
+      />
+      <RefSlot
+        label="Style Reference"
+        hint="Art style consistency — the visual look and feel."
+        refType="style"
+        refs={style.references}
+        styleId={style.id}
+        onUpdated={onUpdated}
+      />
     </div>
   );
 }

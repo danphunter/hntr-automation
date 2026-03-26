@@ -41,15 +41,17 @@ function markWhiskRateLimited(db, tokenId, errMsg) {
 // Whisk uses Google AI / Imagen under the hood. The public API endpoint used
 // by the Whisk web app is authenticated via Google OAuth tokens (Bearer tokens
 // from the user's logged-in session). Token format: "ya29.xxx..."
-async function generateViaWhisk(token, prompt, styleRefs) {
+async function generateViaWhisk(token, prompt, subjectRefs, styleRefImages) {
   const fetch = (await import('node-fetch')).default;
 
   // Whisk uses Google's Imagen API via the whisk.withgoogle.com backend
   const body = {
     prompt,
-    // If character reference images are provided, include their URLs
-    ...(styleRefs && styleRefs.length > 0 && {
-      characterImages: styleRefs.map(r => r.url || r.file_path),
+    ...(subjectRefs && subjectRefs.length > 0 && {
+      subjectImages: subjectRefs.map(r => r.url || r.file_path),
+    }),
+    ...(styleRefImages && styleRefImages.length > 0 && {
+      styleImages: styleRefImages.map(r => r.url || r.file_path),
     }),
     aspectRatio: 'LANDSCAPE',
     outputFormat: 'JPEG',
@@ -80,20 +82,6 @@ async function generateViaWhisk(token, prompt, styleRefs) {
   return data?.image?.data || data?.imageData || data?.url || null;
 }
 
-async function generateViaDallE(apiKey, prompt) {
-  const fetch = (await import('node-fetch')).default;
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: 'dall-e-3', prompt: prompt.slice(0, 4000), n: 1, size: '1792x1024', quality: 'standard' }),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error?.message || `DALLE error ${res.status}`);
-  }
-  const data = await res.json();
-  return { type: 'url', value: data.data[0].url };
-}
 
 async function saveImageFromUrl(url) {
   const fetch = (await import('node-fetch')).default;
@@ -129,23 +117,23 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   // Build prompt with style
   let prompt = scene.image_prompt || scene.text;
+  let subjectRefs = [];
   let styleRefs = [];
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       prompt = `${style.prompt_prefix} ${prompt} ${style.prompt_suffix}`.trim();
-      styleRefs = db.prepare('SELECT * FROM style_references WHERE style_id = ?').all(style.id);
+      const allRefs = db.prepare('SELECT * FROM style_references WHERE style_id = ?').all(style.id);
+      subjectRefs = allRefs.filter(r => (r.reference_type || 'subject') === 'subject');
+      styleRefs = allRefs.filter(r => r.reference_type === 'style');
     }
   }
 
   const whiskTokens = db.prepare("SELECT * FROM whisk_tokens WHERE status = 'active' ORDER BY usage_count ASC").all();
-  const openaiKey = settings.openai_api_key;
 
-  // Demo mode
-  if (!whiskTokens.length && !openaiKey) {
-    const placeholderUrl = `https://picsum.photos/seed/${scene.id}/1920/1080`;
-    db.prepare('UPDATE scenes SET image_url = ?, status = ? WHERE id = ?').run(placeholderUrl, 'generated', scene.id);
-    return res.json({ image_url: placeholderUrl, prompt, source: 'demo' });
+  // No active Whisk tokens — return a clear error
+  if (!whiskTokens.length) {
+    return res.status(400).json({ error: 'No active Whisk tokens — add a token in Settings' });
   }
 
   // Try Whisk tokens in rotation order
@@ -154,7 +142,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   for (const wt of whiskTokens) {
     try {
-      const result = await generateViaWhisk(wt.token, prompt, styleRefs);
+      const result = await generateViaWhisk(wt.token, prompt, subjectRefs, styleRefs);
       if (result) {
         markWhiskUsed(db, wt.id);
         imageResult = { type: result.startsWith('http') ? 'url' : 'base64', value: result };
@@ -171,21 +159,8 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
 
-  // Fallback to DALL-E
-  if (!imageResult && openaiKey) {
-    try {
-      imageResult = await generateViaDallE(openaiKey, prompt);
-      source = 'dalle';
-    } catch (err) {
-      return res.status(500).json({ error: `All providers failed. Last error: ${err.message}` });
-    }
-  }
-
   if (!imageResult) {
-    // Fall back to placeholder so the workflow keeps moving
-    const placeholderUrl = `https://picsum.photos/seed/${scene.id}/1920/1080`;
-    db.prepare('UPDATE scenes SET image_url = ?, status = ? WHERE id = ?').run(placeholderUrl, 'generated', scene.id);
-    return res.json({ image_url: placeholderUrl, prompt, source: 'placeholder' });
+    return res.status(400).json({ error: 'All Whisk tokens are rate-limited or expired — add a fresh token in Settings' });
   }
 
   // Save image locally

@@ -121,24 +121,161 @@ router.delete('/:id', authMiddleware, (req, res) => {
 });
 
 // POST /api/projects/:id/upload-audio
-router.post('/:id/upload-audio', authMiddleware, upload.single('audio'), (req, res) => {
+router.post('/:id/upload-audio', authMiddleware, (req, res) => {
+  upload.single('audio')(req, res, (err) => {
+    if (err) {
+      console.error('Audio upload error:', err);
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No audio file received' });
+
+    try {
+      const db = getDb();
+      const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+      if (!project) return res.status(404).json({ error: 'Not found' });
+      if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      if (project.audio_path && fs.existsSync(project.audio_path)) {
+        try { fs.unlinkSync(project.audio_path); } catch {}
+      }
+
+      db.prepare(`
+        UPDATE projects SET audio_path = ?, audio_filename = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(req.file.path, req.file.originalname, req.params.id);
+
+      res.json({ success: true, filename: req.file.originalname, path: req.file.filename });
+    } catch (e) {
+      console.error('Upload handler error:', e);
+      res.status(500).json({ error: e.message || 'Server error' });
+    }
+  });
+});
+
+// POST /api/projects/:id/transcribe — run AssemblyAI on uploaded audio
+router.post('/:id/transcribe', authMiddleware, async (req, res) => {
   const db = getDb();
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Access denied' });
   }
-
-  if (project.audio_path && fs.existsSync(project.audio_path)) {
-    fs.unlinkSync(project.audio_path);
+  if (!project.audio_path || !fs.existsSync(project.audio_path)) {
+    return res.status(400).json({ error: 'No audio file uploaded yet' });
   }
 
-  db.prepare(`
-    UPDATE projects SET audio_path = ?, audio_filename = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-  `).run(req.file.path, req.file.originalname, req.params.id);
+  const settings = db.prepare('SELECT key, value FROM settings').all();
+  const settingsMap = Object.fromEntries(settings.map(r => [r.key, r.value]));
+  const apiKey = settingsMap.assemblyai_api_key;
+  if (!apiKey) return res.status(400).json({ error: 'AssemblyAI API key not configured in Settings' });
 
-  res.json({ success: true, filename: req.file.originalname, path: req.file.filename });
+  try {
+    const fetch = (await import('node-fetch')).default;
+
+    // 1. Upload audio file to AssemblyAI
+    const audioBuffer = fs.readFileSync(project.audio_path);
+    const uploadRes = await fetch('https://api.assemblyai.com/v2/upload', {
+      method: 'POST',
+      headers: { authorization: apiKey },
+      body: audioBuffer,
+    });
+    if (!uploadRes.ok) {
+      const t = await uploadRes.text();
+      throw new Error(`AssemblyAI upload failed (${uploadRes.status}): ${t.slice(0, 200)}`);
+    }
+    const { upload_url } = await uploadRes.json();
+
+    // 2. Start transcription job
+    const jobRes = await fetch('https://api.assemblyai.com/v2/transcript', {
+      method: 'POST',
+      headers: { authorization: apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ audio_url: upload_url, language_code: 'en_us' }),
+    });
+    if (!jobRes.ok) {
+      const t = await jobRes.text();
+      throw new Error(`AssemblyAI job start failed (${jobRes.status}): ${t.slice(0, 200)}`);
+    }
+    const { id: jobId } = await jobRes.json();
+
+    // 3. Poll until complete (up to 3 minutes)
+    let transcript = null;
+    const deadline = Date.now() + 3 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 3000));
+      const statusRes = await fetch(`https://api.assemblyai.com/v2/transcript/${jobId}`, {
+        headers: { authorization: apiKey },
+      });
+      const data = await statusRes.json();
+      if (data.status === 'completed') { transcript = data; break; }
+      if (data.status === 'error') throw new Error(`AssemblyAI error: ${data.error}`);
+    }
+    if (!transcript) throw new Error('AssemblyAI transcription timed out after 3 minutes');
+
+    // 4. Build scenes from word-level timestamps
+    const scenes = buildScenesFromTranscript(transcript);
+
+    // 5. Update project script (only if no existing script, or if caller requested override)
+    const overrideScript = req.body?.overrideScript !== false;
+    if (overrideScript || !project.script?.trim()) {
+      db.prepare('UPDATE projects SET script = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(transcript.text, req.params.id);
+    }
+
+    // 6. Replace scenes with transcript-based scenes
+    db.prepare('DELETE FROM scenes WHERE project_id = ?').run(req.params.id);
+    const insert = db.prepare(`
+      INSERT INTO scenes (id, project_id, scene_order, text, start_time, end_time, duration, image_prompt, image_url, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, '', '', 'pending')
+    `);
+    db.transaction(sceneList => {
+      sceneList.forEach((s, i) => insert.run(uuidv4(), req.params.id, i, s.text, s.start_time, s.end_time, s.duration));
+    })(scenes);
+
+    db.prepare(`UPDATE projects SET status = 'in_progress', updated_at = CURRENT_TIMESTAMP,
+      started_at = CASE WHEN started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END
+      WHERE id = ?`).run(req.params.id);
+
+    const savedScenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.id);
+    res.json({ transcript: transcript.text, scenes: savedScenes });
+  } catch (err) {
+    console.error('Transcription error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
+
+function buildScenesFromTranscript(transcript) {
+  const words = transcript.words || [];
+  if (!words.length) {
+    const dur = Math.max(Math.round((transcript.audio_duration || 5000) / 1000), 1);
+    return [{ text: transcript.text || '', start_time: 0, end_time: dur, duration: dur }];
+  }
+
+  const scenes = [];
+  let current = [];
+
+  const flush = () => {
+    if (!current.length) return;
+    const text = current.map(w => w.text).join(' ');
+    const start_time = Math.round(current[0].start / 10) / 100;
+    const end_time = Math.round(current[current.length - 1].end / 10) / 100;
+    const duration = Math.max(Math.round((end_time - start_time) * 100) / 100, 0.5);
+    scenes.push({ text, start_time, end_time, duration });
+    current = [];
+  };
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    current.push(w);
+    const endsWithPunct = /[.!?]$/.test(w.text);
+    const longPause = i < words.length - 1 && (words[i + 1].start - w.end) > 1500;
+    // Flush at sentence boundary (with at least 5 words to avoid tiny scenes)
+    if ((endsWithPunct || longPause) && current.length >= 5) flush();
+  }
+  flush();
+
+  return scenes.length ? scenes : [{ text: transcript.text, start_time: 0, end_time: 5, duration: 5 }];
+}
 
 // GET /api/projects/:id/audio
 router.get('/:id/audio', authMiddleware, (req, res) => {

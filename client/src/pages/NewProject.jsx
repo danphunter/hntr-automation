@@ -1,20 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
-import { useAuth } from '../contexts/AuthContext';
-import { ChevronRight, Film, FileText, Mic, Loader2, Upload, X } from 'lucide-react';
+import { ChevronRight, Film, Mic, Loader2, Upload, X } from 'lucide-react';
 
-const STEPS = ['Details', 'Script', 'Audio'];
+const STEPS = ['Details', 'Audio'];
 
 export default function NewProject() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [styles, setStyles] = useState([]);
-  const [form, setForm] = useState({ title: '', script: '', style_id: '', notes: '' });
+  const [form, setForm] = useState({ title: '', style_id: '', notes: '' });
   const [audioFile, setAudioFile] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [projectId, setProjectId] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => { api.getStyles().then(setStyles).catch(() => {}); }, []);
@@ -27,14 +24,11 @@ export default function NewProject() {
       if (!form.title.trim()) { setError('Project title is required'); return; }
       if (!form.style_id) { setError('Please select a style'); return; }
       setStep(1);
-    } else if (step === 1) {
-      if (!form.script.trim()) { setError('Please paste your script'); return; }
-      setStep(2);
     } else {
       // Create project + optionally upload audio
       setCreating(true);
       try {
-        const project = await api.createProject(form);
+        const project = await api.createProject({ ...form, script: '' });
         if (audioFile) {
           await api.uploadAudio(project.id, audioFile);
         }
@@ -113,36 +107,15 @@ export default function NewProject() {
           </div>
         )}
 
-        {/* Step 1: Script */}
+        {/* Step 1: Audio */}
         {step === 1 && (
-          <div className="space-y-4">
-            <div className="flex items-start gap-3 p-3 bg-indigo-900/20 border border-indigo-800/40 rounded-lg">
-              <FileText size={16} className="text-indigo-400 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-indigo-300">Paste your full voiceover script below. The app will automatically break it into scenes based on paragraph breaks.</p>
-            </div>
-            <div>
-              <label className="label">Script *</label>
-              <textarea
-                className="input min-h-72 resize-y font-mono text-sm"
-                value={form.script}
-                onChange={e => set('script', e.target.value)}
-                placeholder={`In the beginning, God created the heavens and the earth.\n\nThe earth was without form and void, and darkness was over the face of the deep.\n\nAnd the Spirit of God was hovering over the face of the waters...`}
-                autoFocus
-              />
-              <p className="text-xs text-gray-600 mt-1">
-                {form.script.split(/\s+/).filter(Boolean).length} words ·{' '}
-                {form.script.split(/\n{2,}/).filter(s => s.trim()).length} paragraphs (scenes)
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Audio */}
-        {step === 2 && (
           <div className="space-y-4">
             <div className="flex items-start gap-3 p-3 bg-blue-900/20 border border-blue-800/40 rounded-lg">
               <Mic size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-blue-300">Upload your voiceover audio file. This will be used to time the scenes and overlaid on the final video. You can also add it later.</p>
+              <p className="text-sm text-blue-300">
+                Upload your voiceover — it will be automatically transcribed and split into scenes with timing.
+                You can also skip this and add audio from inside the project.
+              </p>
             </div>
             <div>
               <label className="label">Voiceover Audio (MP3 / WAV)</label>
