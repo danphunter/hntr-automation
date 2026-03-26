@@ -85,12 +85,21 @@ function WhiskTokensSection() {
   }[s] || 'text-gray-500 bg-gray-800');
 
   return (
-    <Section title="Whisk Tokens — Token Rotation Pool">
+    <Section title="Whisk Tokens — Google OAuth Token Pool">
       <p className="text-sm text-gray-500">
-        Whisk tokens are Google OAuth tokens (ya29.xxx) from your Whisk accounts.
-        The app tries each active token in order, rotating when one hits its limit.
-        Tokens may expire daily — paste fresh ones here when needed.
+        Whisk uses <strong className="text-gray-300">Google OAuth tokens</strong> (ya29.xxx) to call Google's Imagen 3.5 API.
+        The app rotates through active tokens, and marks any that return 401/403 as expired.
       </p>
+      <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-3 text-xs text-gray-400 space-y-1">
+        <p className="font-medium text-gray-300">How to get a token:</p>
+        <ol className="list-decimal list-inside space-y-0.5 ml-1">
+          <li>Open <span className="font-mono text-gray-300">labs.google</span> and sign in to Whisk</li>
+          <li>Press <kbd className="bg-gray-700 rounded px-1 py-0.5">F12</kbd> → Network tab → generate an image</li>
+          <li>Find the <span className="font-mono text-gray-300">whisk:generateImage</span> request</li>
+          <li>Copy the <span className="font-mono text-gray-300">Authorization</span> header value — everything <em>after</em> <span className="font-mono text-gray-300">Bearer </span></li>
+        </ol>
+        <p className="text-yellow-500/80">Tokens expire ~daily. Add multiple accounts for uninterrupted generation.</p>
+      </div>
 
       {loading ? (
         <Loader2 size={20} className="animate-spin text-gray-600" />
@@ -120,7 +129,7 @@ function WhiskTokensSection() {
               <div className="flex gap-2">
                 <input
                   className="input text-xs font-mono flex-1"
-                  placeholder="Paste fresh token to update (ya29.xxx…)"
+                  placeholder="Paste fresh Google OAuth token (ya29.xxx…)"
                   value={editToken[t.id] || ''}
                   onChange={e => setEditToken(tok => ({ ...tok, [t.id]: e.target.value }))}
                 />
@@ -139,10 +148,10 @@ function WhiskTokensSection() {
 
       {/* Add new token */}
       <form onSubmit={handleAdd} className="border-t border-gray-800 pt-4 space-y-3">
-        <h3 className="text-sm font-medium text-gray-400">Add New Token</h3>
+        <h3 className="text-sm font-medium text-gray-400">Add New Google OAuth Token</h3>
         <div className="grid grid-cols-2 gap-2">
-          <input className="input text-sm" placeholder='Label (e.g. "Account 2")' value={newLabel} onChange={e => setNewLabel(e.target.value)} />
-          <input className="input text-sm font-mono" placeholder="ya29.xxx token" value={newToken} onChange={e => setNewToken(e.target.value)} />
+          <input className="input text-sm" placeholder='Label (e.g. "Dan Account 2")' value={newLabel} onChange={e => setNewLabel(e.target.value)} />
+          <input className="input text-sm font-mono" placeholder="ya29.xxx… (from F12 Authorization header)" value={newToken} onChange={e => setNewToken(e.target.value)} />
         </div>
         <button type="submit" disabled={adding || !newLabel.trim() || !newToken.trim()} className="btn-primary flex items-center gap-2 text-sm">
           {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Token

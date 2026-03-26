@@ -37,37 +37,55 @@ function markWhiskRateLimited(db, tokenId, errMsg) {
   `).run(errMsg, tokenId);
 }
 
-// Attempt to generate via Whisk API
-// Whisk uses Google AI / Imagen under the hood. The public API endpoint used
-// by the Whisk web app is authenticated via Google OAuth tokens (Bearer tokens
-// from the user's logged-in session). Token format: "ya29.xxx..."
-async function generateViaWhisk(token, prompt, styleRefs) {
+// Attempt to generate via Whisk API (Google Imagen 3.5)
+// Uses the real aisandbox-pa.googleapis.com endpoint captured from Whisk web app.
+// Token: Google OAuth Bearer token (ya29.xxx) from user's logged-in Whisk session.
+async function generateViaWhisk(token, prompt, aspectRatio = 'IMAGE_ASPECT_RATIO_LANDSCAPE') {
   const fetch = (await import('node-fetch')).default;
 
-  // Whisk uses Google's Imagen API via the whisk.withgoogle.com backend
+  const workflowId = uuidv4();
+  const sessionId = `;${Date.now()}`;
+
   const body = {
+    clientContext: {
+      workflowId,
+      tool: 'BACKBONE',
+      sessionId,
+    },
+    imageModelSettings: {
+      imageModel: 'IMAGEN_3_5',
+      aspectRatio,
+    },
+    seed: Math.floor(Math.random() * 2147483647),
     prompt,
-    // If character reference images are provided, include their URLs
-    ...(styleRefs && styleRefs.length > 0 && {
-      characterImages: styleRefs.map(r => r.url || r.file_path),
-    }),
-    aspectRatio: 'LANDSCAPE',
-    outputFormat: 'JPEG',
+    mediaCategory: 'MEDIA_CATEGORY_BOARD',
   };
 
-  const res = await fetch('https://whisk.withgoogle.com/api/v1/images:generate', {
+  const res = await fetch('https://aisandbox-pa.googleapis.com/v1/whisk:generateImage', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      'User-Agent': 'Mozilla/5.0 (compatible)',
+      'authorization': `Bearer ${token}`,
+      'content-type': 'text/plain;charset=UTF-8',
+      'origin': 'https://labs.google',
+      'referer': 'https://labs.google/',
+      'x-browser-channel': 'stable',
+      'x-browser-copyright': 'Copyright 2026 Google LLC. All rights reserved.',
+      'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
+      'x-browser-year': '2026',
+      'x-client-data': 'CPyUywE=',
     },
     body: JSON.stringify(body),
   });
 
-  if (res.status === 429 || res.status === 403) {
+  // 401/403 = token expired or unauthorized → rotate to next token
+  if (res.status === 401 || res.status === 403) {
     const text = await res.text();
-    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+    throw new Error(`RATE_LIMITED:${res.status}:${text.slice(0, 200)}`);
+  }
+
+  if (res.status === 429) {
+    const text = await res.text();
+    throw new Error(`RATE_LIMITED:429:${text.slice(0, 200)}`);
   }
 
   if (!res.ok) {
@@ -76,8 +94,14 @@ async function generateViaWhisk(token, prompt, styleRefs) {
   }
 
   const data = await res.json();
-  // Whisk returns base64 image data or a URL depending on endpoint
-  return data?.image?.data || data?.imageData || data?.url || null;
+
+  // Response structure: { images: [{ encodedImage: "<base64>", ... }] }
+  const b64 = data?.images?.[0]?.encodedImage
+    || data?.image?.data
+    || data?.imageData
+    || null;
+
+  return b64 ? { type: 'base64', value: b64 } : null;
 }
 
 async function generateViaDallE(apiKey, prompt) {
@@ -152,19 +176,22 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   let imageResult = null;
   let source = 'unknown';
 
+  // Determine aspect ratio from project settings (default: landscape for YouTube)
+  const aspectRatio = project.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE';
+
   for (const wt of whiskTokens) {
     try {
-      const result = await generateViaWhisk(wt.token, prompt, styleRefs);
+      const result = await generateViaWhisk(wt.token, prompt, aspectRatio);
       if (result) {
         markWhiskUsed(db, wt.id);
-        imageResult = { type: result.startsWith('http') ? 'url' : 'base64', value: result };
+        imageResult = result;
         source = `whisk:${wt.label}`;
         break;
       }
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markWhiskRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Whisk token "${wt.label}" rate limited, trying next...`);
+        console.log(`Whisk token "${wt.label}" rate limited/expired, trying next...`);
       } else {
         console.error(`Whisk token "${wt.label}" error:`, err.message);
       }
