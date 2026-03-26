@@ -209,7 +209,7 @@ router.post('/:id/transcribe', authMiddleware, async (req, res) => {
     const jobRes = await fetch('https://api.assemblyai.com/v2/transcript', {
       method: 'POST',
       headers: { authorization: apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ audio_url: upload_url, language_code: 'en_us' }),
+      body: JSON.stringify({ audio_url: upload_url, speech_model: 'universal-2' }),
     });
     if (!jobRes.ok) {
       const t = await jobRes.text();
