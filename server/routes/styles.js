@@ -8,7 +8,9 @@ const { authMiddleware, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
-const REFS_DIR = path.join(__dirname, '..', 'uploads', 'references');
+// Use UPLOADS_PATH set by server/index.js (persistent on Railway), fallback local
+const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
+const REFS_DIR = path.join(UPLOADS_BASE, 'references');
 if (!fs.existsSync(REFS_DIR)) fs.mkdirSync(REFS_DIR, { recursive: true });
 
 const refStorage = multer.diskStorage({

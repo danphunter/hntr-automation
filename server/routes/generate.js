@@ -104,9 +104,6 @@ function markWhiskRateLimited(db, tokenId, errMsg) {
 async function generateViaWhisk(token, prompt) {
   const fetch = (await import('node-fetch')).default;
 
-  console.log('Using Whisk token (first 20 chars):', token.substring(0, 20));
-  console.log('Whisk prompt being sent:', prompt);
-
   const body = {
     clientContext: {
       workflowId: uuidv4(),
@@ -168,16 +165,6 @@ async function generateViaWhisk(token, prompt) {
 }
 
 
-async function saveImageFromUrl(url) {
-  const fetch = (await import('node-fetch')).default;
-  const res = await fetch(url);
-  const filename = `img-${uuidv4()}.jpg`;
-  const imgPath = path.join(IMAGES_DIR, filename);
-  const buffer = await res.buffer();
-  fs.writeFileSync(imgPath, buffer);
-  return { filename, imgPath };
-}
-
 async function saveImageFromBase64(b64) {
   const filename = `img-${uuidv4()}.jpg`;
   const imgPath = path.join(IMAGES_DIR, filename);
@@ -207,8 +194,6 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
   let prompt = sanitizeForWhisk(rawPrompt);
-  console.log('Original prompt:', rawPrompt);
-  console.log('Sanitized prompt:', prompt);
 
   // Try Whisk tokens in rotation order (getNextWhiskToken auto-resets expired cooldowns)
   let imageResult = null;
@@ -280,13 +265,8 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     });
   }
 
-  // Save image locally
-  let filename, imgPath;
-  if (imageResult.type === 'url') {
-    ({ filename, imgPath } = await saveImageFromUrl(imageResult.value));
-  } else {
-    ({ filename, imgPath } = await saveImageFromBase64(imageResult.value));
-  }
+  // Save image locally (Whisk always returns base64)
+  const { filename, imgPath } = await saveImageFromBase64(imageResult.value);
 
   const localUrl = `/api/generate/image-file/${filename}`;
   db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?')
@@ -299,7 +279,9 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 // No auth required — filenames are UUID-based (unguessable) and contain no sensitive data.
 // Browser <img> tags load images without Authorization headers, so auth here breaks previews.
 router.get('/image-file/:filename', (req, res) => {
-  const imgPath = path.join(IMAGES_DIR, req.params.filename);
+  // Use path.basename to strip any ../ traversal attempts before joining
+  const imgPath = path.join(IMAGES_DIR, path.basename(req.params.filename));
+  if (!imgPath.startsWith(IMAGES_DIR)) return res.status(404).json({ error: 'Not found' });
   if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Not found' });
   res.sendFile(imgPath);
 });

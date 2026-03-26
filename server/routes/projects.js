@@ -124,13 +124,10 @@ router.delete('/:id', authMiddleware, (req, res) => {
 
 // POST /api/projects/:id/upload-audio
 router.post('/:id/upload-audio', authMiddleware, (req, res) => {
-  console.log('Upload request received for project:', req.params.id);
   upload.single('audio')(req, res, (err) => {
     if (err) {
-      console.error('Multer error:', err);
       return res.status(400).json({ error: err.message || 'Upload failed' });
     }
-    console.log('Upload request received, file size:', req.file?.size);
     if (!req.file) return res.status(400).json({ error: 'No audio file received' });
 
     try {
@@ -160,16 +157,6 @@ router.post('/:id/upload-audio', authMiddleware, (req, res) => {
 // POST /api/projects/:id/transcribe — upload audio to AssemblyAI and start job (async)
 router.post('/:id/transcribe', authMiddleware, async (req, res) => {
   const db = getDb();
-
-  // Ensure required columns exist
-  try { db.exec("ALTER TABLE projects ADD COLUMN transcribe_job_id TEXT"); } catch {}
-  try { db.exec("ALTER TABLE projects ADD COLUMN transcribe_status TEXT DEFAULT ''"); } catch {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN image_url TEXT DEFAULT ''"); } catch {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN image_prompt TEXT DEFAULT ''"); } catch {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0"); } catch {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN end_time REAL DEFAULT 0"); } catch {}
-  try { db.exec("ALTER TABLE scenes ADD COLUMN duration REAL DEFAULT 0"); } catch {}
-
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
@@ -264,7 +251,7 @@ router.get('/:id/transcribe-status', authMiddleware, async (req, res) => {
     // Completed — process into scenes and save
     const scenes = buildScenesFromTranscript(data);
 
-    const overrideScript = req.query.overrideScript !== 'false';
+    const overrideScript = req.body.overrideScript !== false;
     if (overrideScript || !project.script?.trim()) {
       db.prepare('UPDATE projects SET script = ? WHERE id = ?').run(data.text, req.params.id);
     }

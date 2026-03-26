@@ -13,8 +13,8 @@ export default function WhiskTokenBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    api.getWhiskTokens().then(setTokens).catch(() => {});
-  }, []);
+    if (isAdmin) api.getWhiskTokens().then(setTokens).catch(() => {});
+  }, [isAdmin]);
 
   const expiredTokens = tokens.filter(t => t.status === 'rate_limited');
   const activeCount = tokens.filter(t => t.status === 'active').length;

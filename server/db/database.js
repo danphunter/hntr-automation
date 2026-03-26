@@ -118,6 +118,13 @@ function initDb() {
       value TEXT,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+    CREATE INDEX IF NOT EXISTS idx_projects_created_at ON projects(created_at);
+    CREATE INDEX IF NOT EXISTS idx_scenes_project_id ON scenes(project_id, scene_order);
+    CREATE INDEX IF NOT EXISTS idx_style_refs_style_id ON style_references(style_id);
+    CREATE INDEX IF NOT EXISTS idx_whisk_tokens_status ON whisk_tokens(status);
   `);
 
   // Migrations for existing databases (add columns if missing)
