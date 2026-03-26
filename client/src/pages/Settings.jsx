@@ -32,6 +32,28 @@ function ApiKeyField({ label, keyName, values, onChange, hint }) {
   );
 }
 
+function useCooldownSeconds(rateLimitedUntil) {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    if (!rateLimitedUntil) { setSecs(0); return; }
+    function tick() {
+      const diff = Math.max(0, Math.round((new Date(rateLimitedUntil + 'Z') - Date.now()) / 1000));
+      setSecs(diff);
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [rateLimitedUntil]);
+  return secs;
+}
+
+function TokenCooldown({ rateLimitedUntil, onExpired }) {
+  const secs = useCooldownSeconds(rateLimitedUntil);
+  useEffect(() => { if (secs === 0 && rateLimitedUntil) onExpired?.(); }, [secs, rateLimitedUntil]);
+  if (!rateLimitedUntil || secs === 0) return null;
+  return <span className="text-xs text-orange-400">auto-reset in {secs}s</span>;
+}
+
 function WhiskTokensSection() {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -106,9 +128,12 @@ function WhiskTokensSection() {
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge(t.status)}`}>{t.status}</span>
                 <span className="text-xs text-gray-600">{t.usage_count} uses</span>
                 {t.status === 'rate_limited' && (
-                  <button onClick={() => handleReset(t.id)} className="text-xs text-yellow-400 hover:text-yellow-300 flex items-center gap-1">
-                    <RefreshCw size={11} /> Reset
-                  </button>
+                  <>
+                    <TokenCooldown rateLimitedUntil={t.rate_limited_until} onExpired={load} />
+                    <button onClick={() => handleReset(t.id)} className="text-xs text-yellow-400 hover:text-yellow-300 flex items-center gap-1">
+                      <RefreshCw size={11} /> Reset
+                    </button>
+                  </>
                 )}
                 <button onClick={() => handleDelete(t.id)} className="text-gray-700 hover:text-red-400 transition-colors">
                   <Trash2 size={14} />
