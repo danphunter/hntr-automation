@@ -1,0 +1,13 @@
+.claude/
+node_modules/
+client/node_modules/
+server/node_modules/
+dist/
+client/dist/
+server/uploads/*
+server/renders/*
+!server/uploads/.gitkeep
+!server/renders/.gitkeep
+server/hntr-automation.db
+.env
+*.env.local
