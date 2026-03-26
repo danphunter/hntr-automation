@@ -448,7 +448,7 @@ export default function ProjectDetail() {
 
       {/* ── Page header ─────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 mb-6">
-        <Link to={isAdmin ? '/admin' : '/dashboard'} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
+        <Link to={isAdmin ? '/admin' : '/'} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
           <ChevronLeft size={20} />
         </Link>
         <div className="flex-1 min-w-0">

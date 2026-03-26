@@ -57,13 +57,15 @@ export default function Dashboard() {
       <WhiskTokenBanner />
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-10">
-        <div>
-          <h1 className="text-4xl font-bold text-white">Projects</h1>
-          <p className="text-gray-500 text-base mt-1">
-            {loading ? 'Loading…' : `${projects.length} total · ${completed} completed`}
-          </p>
-        </div>
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold text-white">Projects</h1>
+        <p className="text-gray-500 text-base mt-1">
+          {loading ? 'Loading…' : `${projects.length} total · ${completed} completed`}
+        </p>
+      </div>
+
+      {/* New Project CTA */}
+      <div className="flex justify-center mb-10">
         <Link
           to="/projects/new"
           className="flex items-center gap-2.5 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base rounded-xl shadow-lg shadow-indigo-900/30 transition-all hover:scale-105 active:scale-100"
