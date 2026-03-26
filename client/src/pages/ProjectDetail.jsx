@@ -252,7 +252,7 @@ export default function ProjectDetail() {
     try {
       const updated = await api.updateProject(id, {
         title: editTitle,
-        style_id: parseInt(editStyleId, 10),
+        style_id: editStyleId,
         style: selectedStyle?.name || '',
       });
       setProject(updated);
