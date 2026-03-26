@@ -169,13 +169,11 @@ router.post('/:id/transcribe', authMiddleware, async (req, res) => {
       try { db.exec(`ALTER TABLE projects ADD COLUMN ${col} ${col === 'started_at' ? 'DATETIME' : 'TEXT'}`); } catch {}
     }
   }
-  const requiredSceneCols = ['start_time', 'end_time', 'duration', 'image_url', 'image_prompt'];
-  const sceneCols = db.pragma('table_info(scenes)').map(c => c.name);
-  for (const col of requiredSceneCols) {
-    if (!sceneCols.includes(col)) {
-      try { db.exec(`ALTER TABLE scenes ADD COLUMN ${col} ${col.includes('time') || col === 'duration' ? 'REAL DEFAULT 0' : 'TEXT DEFAULT \\'\\''}`); } catch {}
-    }
-  }
+  try { db.exec("ALTER TABLE scenes ADD COLUMN image_url TEXT DEFAULT ''"); } catch(e) {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN image_prompt TEXT DEFAULT ''"); } catch(e) {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0"); } catch(e) {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN end_time REAL DEFAULT 0"); } catch(e) {}
+  try { db.exec("ALTER TABLE scenes ADD COLUMN duration REAL DEFAULT 0"); } catch(e) {}
 
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
