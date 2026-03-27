@@ -101,7 +101,7 @@ function markWhiskRateLimited(db, tokenId, errMsg) {
 // Whisk uses Google AI / Imagen under the hood. The public API endpoint used
 // by the Whisk web app is authenticated via Google OAuth tokens (Bearer tokens
 // from the user's logged-in session). Token format: "ya29.xxx..."
-async function generateViaWhisk(token, prompt) {
+async function generateViaWhisk(token, prompt, aspectRatio = 'IMAGE_ASPECT_RATIO_LANDSCAPE') {
   const fetch = (await import('node-fetch')).default;
 
   const body = {
@@ -112,7 +112,7 @@ async function generateViaWhisk(token, prompt) {
     },
     imageModelSettings: {
       imageModel: 'IMAGEN_3_5',
-      aspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+      aspectRatio: aspectRatio,
     },
     seed: Math.floor(Math.random() * 1000000),
     prompt,
@@ -187,10 +187,12 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   // Build prompt with style prefix/suffix, then sanitize for Whisk safety filter
   let rawPrompt = scene.image_prompt || scene.text;
+  let aspectRatio = 'IMAGE_ASPECT_RATIO_LANDSCAPE';
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
+      if (style.aspect_ratio) aspectRatio = style.aspect_ratio;
     }
   }
   let prompt = sanitizeForWhisk(rawPrompt);
@@ -219,7 +221,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
     triedCount++;
     try {
-      const encodedImage = await generateViaWhisk(wt.token, prompt);
+      const encodedImage = await generateViaWhisk(wt.token, prompt, aspectRatio);
       if (encodedImage) {
         markWhiskUsed(db, wt.id);
         imageResult = { type: 'base64', value: encodedImage };
@@ -300,16 +302,19 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const apiKey = settings.openai_api_key;
 
   let styleContext = '';
+  let style = null;
   if (project.style_id) {
-    const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
-    if (style) styleContext = `Visual style: ${style.name}. ${style.description}`;
+    style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
+    if (style) {
+      styleContext = `Visual style: "${style.name}" — ${style.description} Visual instructions: ${style.prompt_prefix}`;
+    }
   }
 
   if (!apiKey) {
     const updated = scenes.map(scene => {
       const visualBase = scene.text.slice(0, 150).replace(/["""'']/g, '');
-      const stylePrefix = styleContext ? `${styleContext}. ` : '';
-      const prompt = `${stylePrefix}A cinematic scene depicting: ${visualBase}. Dramatic lighting, high quality, film still, wide angle shot.`;
+      const styleHint = style ? `${style.name} style. ` : '';
+      const prompt = `${styleHint}A cinematic scene depicting: ${visualBase}. Dramatic lighting, high quality, film still, wide angle shot.`;
       db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
       return { id: scene.id, image_prompt: prompt };
     });
@@ -326,7 +331,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: `You write concise, vivid image prompts for AI image generation. ${styleContext} Each prompt must be visually specific, cinematic, and under 150 words. Return only the prompt.` },
+            { role: 'system', content: `You write concise, vivid image prompts for AI image generation. ${styleContext} Write prompts that visually match this style. Each prompt must be visually specific, cinematic, and under 150 words. Return only the prompt text.` },
             { role: 'user', content: `Write an image prompt for this scene: "${scene.text}"` },
           ],
           max_tokens: 200,

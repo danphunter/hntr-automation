@@ -19,11 +19,69 @@ function getDb() {
 }
 
 const DEFAULT_STYLES = [
-  { id: 'style-bible', name: 'Bible Animation', description: 'Cinematic painterly scenes from scripture — epic, reverent, full of light and depth.', prompt_prefix: 'cinematic painterly biblical scene, dramatic lighting, epic composition, high detail, oil painting style,', prompt_suffix: ', golden hour light, epic scale, reverent atmosphere, 16:9 widescreen', color: '#7C3AED', icon: '✝️', scene_pattern: '["image"]' },
-  { id: 'style-finance', name: 'Finance Explainer', description: 'Clean minimal infographics for financial and business content.', prompt_prefix: 'clean minimalist infographic illustration, flat design, professional business style,', prompt_suffix: ', white background, clear typography, data visualization, corporate style', color: '#059669', icon: '📈', scene_pattern: '["image","video"]' },
-  { id: 'style-history', name: 'History Documentary', description: 'Dramatic realistic historical scenes — like a high-budget documentary.', prompt_prefix: 'dramatic realistic historical scene, photorealistic painting, documentary style, detailed period accuracy,', prompt_suffix: ', cinematic composition, dramatic lighting, museum quality art', color: '#B45309', icon: '🏛️', scene_pattern: '["image"]' },
-  { id: 'style-whiteboard', name: 'Whiteboard / Stickman', description: 'Simple whiteboard animation style with stick figures and hand-drawn elements.', prompt_prefix: 'whiteboard animation style, hand-drawn stick figures, simple black marker on white background,', prompt_suffix: ', clean simple illustration, educational style, minimalist sketch', color: '#0369A1', icon: '✏️', scene_pattern: '["video"]' },
-  { id: 'style-science', name: 'Science Explainer', description: '3D renders and scientific visualizations for science and tech content.', prompt_prefix: 'highly detailed 3D render, scientific visualization, photorealistic CGI, educational science illustration,', prompt_suffix: ', studio lighting, sharp detail, educational diagram style', color: '#0891B2', icon: '🔬', scene_pattern: '["image","image","video"]' },
+  {
+    id: 'style-bible', name: 'Bible Animation', color: '#7C3AED', icon: '✝️',
+    description: 'Epic oil painting scenes from scripture — dramatic Renaissance lighting, warm golden tones, biblical era settings.',
+    prompt_prefix: 'epic oil painting style, dramatic Renaissance lighting, warm golden tones, biblical era setting, rich ornate details, masterpiece quality,',
+    prompt_suffix: ', golden hour light, epic scale, reverent atmosphere, 16:9 widescreen',
+    scene_pattern: '["image"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-truecrime', name: 'True Crime', color: '#1F2937', icon: '🔍',
+    description: 'Dark moody atmosphere with noir lighting, gritty urban environments, and surveillance footage aesthetic.',
+    prompt_prefix: 'dark noir style, high contrast deep shadows, gritty urban environment, moody tense atmosphere, desaturated muted tones,',
+    prompt_suffix: ', cinematic noir composition, dramatic shadow play, urban setting, 16:9',
+    scene_pattern: '["image","image","video"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-nature', name: 'Nature Documentary', color: '#065F46', icon: '🌿',
+    description: 'Photorealistic National Geographic style — natural lighting, stunning wildlife and landscape photography.',
+    prompt_prefix: 'photorealistic nature photography, National Geographic style, natural lighting, stunning wildlife or landscape,',
+    prompt_suffix: ', ultra-sharp detail, golden hour or blue hour light, 16:9 cinematic composition',
+    scene_pattern: '["image","video","image"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-history', name: 'History', color: '#B45309', icon: '🏛️',
+    description: 'Period-accurate historical illustration — muted earth tones, detailed historical architecture and period clothing.',
+    prompt_prefix: 'period-accurate historical illustration, muted earth tones, detailed historical architecture and period clothing, documentary style,',
+    prompt_suffix: ', cinematic composition, dramatic lighting, museum quality historical art',
+    scene_pattern: '["image"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-scifi', name: 'Sci-Fi', color: '#0284C7', icon: '🚀',
+    description: 'Futuristic environments with neon and holographic lighting, space and advanced technology aesthetics.',
+    prompt_prefix: 'futuristic sci-fi environment, neon and holographic lighting, advanced technology, space opera or cyberpunk aesthetic,',
+    prompt_suffix: ', dramatic cinematic lighting, ultra-detailed, wide cinematic shot',
+    scene_pattern: '["image","video","image"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-horror', name: 'Horror/Mystery', color: '#374151', icon: '👁️',
+    description: 'Dark shadows and foggy atmosphere with unsettling compositions, muted desaturated colors.',
+    prompt_prefix: 'dark atmospheric horror style, deep dramatic shadows, foggy misty atmosphere, unsettling eerie composition, muted desaturated colors,',
+    prompt_suffix: ', cinematic horror atmosphere, mysterious and tense, dramatic shadow play',
+    scene_pattern: '["image","image","video"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-finance', name: 'Finance Explainer', color: '#059669', icon: '📈',
+    description: 'Clean minimal infographics for financial and business content.',
+    prompt_prefix: 'clean minimalist infographic illustration, flat design, professional business style,',
+    prompt_suffix: ', white background, clear typography, data visualization, corporate style',
+    scene_pattern: '["image","video"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-whiteboard', name: 'Whiteboard / Stickman', color: '#0369A1', icon: '✏️',
+    description: 'Simple whiteboard animation style with stick figures and hand-drawn elements.',
+    prompt_prefix: 'whiteboard animation style, hand-drawn stick figures, simple black marker on white background,',
+    prompt_suffix: ', clean simple illustration, educational style, minimalist sketch',
+    scene_pattern: '["video"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
+  {
+    id: 'style-science', name: 'Science Explainer', color: '#0891B2', icon: '🔬',
+    description: '3D renders and scientific visualizations for science and tech content.',
+    prompt_prefix: 'highly detailed 3D render, scientific visualization, photorealistic CGI, educational science illustration,',
+    prompt_suffix: ', studio lighting, sharp detail, educational diagram style',
+    scene_pattern: '["image","image","video"]', aspect_ratio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+  },
 ];
 
 function initDb() {
@@ -49,6 +107,7 @@ function initDb() {
       icon TEXT DEFAULT '🎬',
       is_default INTEGER DEFAULT 0,
       scene_pattern TEXT DEFAULT '["image"]',
+      aspect_ratio TEXT DEFAULT 'IMAGE_ASPECT_RATIO_LANDSCAPE',
       created_by TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -137,6 +196,7 @@ function initDb() {
     "ALTER TABLE projects ADD COLUMN audio_path TEXT",
     "ALTER TABLE projects ADD COLUMN audio_filename TEXT",
     "ALTER TABLE styles ADD COLUMN scene_pattern TEXT DEFAULT '[\"image\"]'",
+    "ALTER TABLE styles ADD COLUMN aspect_ratio TEXT DEFAULT 'IMAGE_ASPECT_RATIO_LANDSCAPE'",
     "ALTER TABLE style_references ADD COLUMN reference_type TEXT DEFAULT 'subject'",
     "ALTER TABLE scenes ADD COLUMN image_url TEXT DEFAULT ''",
     "ALTER TABLE scenes ADD COLUMN start_time REAL DEFAULT 0",
@@ -164,19 +224,20 @@ function initDb() {
     console.log('✅ Seeded users: dan/dan123, john/john123, christian/christian123');
   }
 
-  // Seed styles
-  const styleCount = db.prepare('SELECT COUNT(*) as count FROM styles').get();
-  if (styleCount.count === 0) {
-    const insert = db.prepare(`INSERT INTO styles (id, name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, is_default, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'user-dan')`);
-    for (const s of DEFAULT_STYLES) insert.run(s.id, s.name, s.description, s.prompt_prefix, s.prompt_suffix, s.color, s.icon, s.scene_pattern);
-    console.log('✅ Seeded default styles');
-  } else {
-    // Update existing default styles with scene_pattern if not set
-    const updatePattern = db.prepare("UPDATE styles SET scene_pattern = ? WHERE id = ? AND (scene_pattern IS NULL OR scene_pattern = '[\"image\"]' OR scene_pattern = '')");
-    for (const s of DEFAULT_STYLES) {
-      updatePattern.run(s.scene_pattern, s.id);
-    }
+  // Seed/sync default styles — INSERT OR IGNORE adds missing ones, UPDATE keeps existing defaults current
+  const insertStyle = db.prepare(`
+    INSERT OR IGNORE INTO styles (id, name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, aspect_ratio, is_default, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'user-dan')
+  `);
+  const updateDefault = db.prepare(`
+    UPDATE styles SET name=?, description=?, prompt_prefix=?, prompt_suffix=?, color=?, icon=?, scene_pattern=?, aspect_ratio=?
+    WHERE id=? AND is_default=1
+  `);
+  for (const s of DEFAULT_STYLES) {
+    insertStyle.run(s.id, s.name, s.description, s.prompt_prefix, s.prompt_suffix, s.color, s.icon, s.scene_pattern, s.aspect_ratio);
+    updateDefault.run(s.name, s.description, s.prompt_prefix, s.prompt_suffix, s.color, s.icon, s.scene_pattern, s.aspect_ratio, s.id);
   }
+  console.log('✅ Default styles synced');
 
   console.log('✅ Database ready at', DB_PATH);
 }

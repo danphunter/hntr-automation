@@ -65,6 +65,12 @@ function parsePattern(raw) {
   try { const p = JSON.parse(raw); return Array.isArray(p) && p.length ? p : ['image']; } catch { return ['image']; }
 }
 
+const ASPECT_RATIO_OPTIONS = [
+  { value: 'IMAGE_ASPECT_RATIO_LANDSCAPE', label: '16:9 Landscape (YouTube)' },
+  { value: 'IMAGE_ASPECT_RATIO_PORTRAIT', label: '9:16 Portrait (Shorts/Reels)' },
+  { value: 'IMAGE_ASPECT_RATIO_SQUARE', label: '1:1 Square' },
+];
+
 function StyleModal({ style, onClose, onSaved }) {
   const isNew = !style;
   const [form, setForm] = useState({
@@ -75,6 +81,7 @@ function StyleModal({ style, onClose, onSaved }) {
     color: style?.color || '#6366F1',
     icon: style?.icon || '🎬',
     scene_pattern: parsePattern(style?.scene_pattern),
+    aspect_ratio: style?.aspect_ratio || 'IMAGE_ASPECT_RATIO_LANDSCAPE',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -142,6 +149,20 @@ function StyleModal({ style, onClose, onSaved }) {
           <div className="p-3 bg-gray-800/50 rounded-lg text-xs text-gray-500 font-mono">
             <p className="text-gray-400 font-medium mb-1">Preview prompt structure:</p>
             <p className="text-gray-600">{form.prompt_prefix || '[prefix]'} <span className="text-indigo-400">[scene description]</span> {form.prompt_suffix || '[suffix]'}</p>
+          </div>
+
+          <div>
+            <label className="label">Default Aspect Ratio</label>
+            <select
+              className="input"
+              value={form.aspect_ratio}
+              onChange={e => set('aspect_ratio', e.target.value)}
+            >
+              {ASPECT_RATIO_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-600 mt-1">Used when generating images with Whisk for this style</p>
           </div>
 
           <ScenePatternEditor
@@ -300,9 +321,12 @@ export default function StylesManager() {
                   const summary = p.length === 1
                     ? (p[0] === 'image' ? 'All images' : 'All video')
                     : p.join(' → ') + ' (repeating)';
+                  const arLabel = { IMAGE_ASPECT_RATIO_LANDSCAPE: '16:9', IMAGE_ASPECT_RATIO_PORTRAIT: '9:16', IMAGE_ASPECT_RATIO_SQUARE: '1:1' }[s.aspect_ratio] || '16:9';
                   return (
-                    <p className="text-xs text-gray-600 mt-1 flex items-center gap-1">
-                      <Film size={10} /> {summary}
+                    <p className="text-xs text-gray-600 mt-1 flex items-center gap-2">
+                      <span className="flex items-center gap-1"><Film size={10} /> {summary}</span>
+                      <span className="text-gray-700">·</span>
+                      <span>{arLabel}</span>
                     </p>
                   );
                 })()}
