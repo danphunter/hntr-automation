@@ -146,8 +146,7 @@ export default function NewProject() {
         {/* Actions */}
         <div className="flex justify-between mt-6 pt-4 border-t border-gray-800">
           <button
-            onClick={() => setStep(s => s - 1)}
-            disabled={step === 0}
+            onClick={() => step === 0 ? navigate('/') : setStep(s => s - 1)}
             className="btn-secondary"
           >
             Back

@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Download, Image, FolderPlus, Plus,
+  Film, Download, Image, FolderPlus,
 } from 'lucide-react';
 
 function formatDuration(startIso, endIso) {
@@ -64,17 +64,6 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* New Project CTA */}
-      <div className="flex justify-center mb-10">
-        <Link
-          to="/projects/new"
-          className="flex items-center gap-2.5 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base rounded-xl shadow-lg shadow-indigo-900/30 transition-all hover:scale-105 active:scale-100"
-        >
-          <Plus size={20} />
-          New Project
-        </Link>
-      </div>
-
       {/* Project list */}
       {loading ? (
         <div className="flex flex-col items-center justify-center py-32 text-gray-600">
@@ -83,11 +72,13 @@ export default function Dashboard() {
         </div>
       ) : projects.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-32 text-center">
-          <div className="w-24 h-24 rounded-3xl bg-gray-900 border border-gray-800 flex items-center justify-center mb-6">
-            <FolderPlus size={40} className="text-gray-600" />
-          </div>
-          <p className="text-gray-400 font-semibold text-lg mb-2">No projects yet</p>
-          <p className="text-gray-600 text-base">Create your first video project to get started</p>
+          <Link
+            to="/projects/new"
+            className="flex items-center gap-3 px-8 py-5 bg-violet-950/40 hover:bg-violet-900/50 border-2 border-violet-700/60 hover:border-violet-500 text-violet-300 hover:text-white font-semibold text-base rounded-2xl shadow-lg shadow-violet-900/20 transition-all hover:scale-105 active:scale-100"
+          >
+            <FolderPlus size={26} className="text-violet-400" />
+            New Project
+          </Link>
         </div>
       ) : (
         <div className="space-y-4">
