@@ -9,33 +9,42 @@ import {
   Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
-const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
-
-// Load reCAPTCHA v3 script and return a token for each call.
-// The script is loaded once; subsequent calls just execute the challenge.
-let recaptchaReady = false;
-function loadRecaptcha() {
-  if (recaptchaReady || document.getElementById('recaptcha-v3')) return;
-  const script = document.createElement('script');
-  script.id = 'recaptcha-v3';
-  script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
-  script.onload = () => { recaptchaReady = true; };
-  document.head.appendChild(script);
-}
-
-async function getRecaptchaToken() {
-  // Wait up to 10 seconds for the script to load
-  for (let i = 0; i < 100; i++) {
-    if (window.grecaptcha?.ready) break;
-    await new Promise(r => setTimeout(r, 100));
-  }
-  if (!window.grecaptcha?.ready) throw new Error('reCAPTCHA failed to load');
+// Get a reCAPTCHA Enterprise token via the HNTR Flow Bridge Chrome extension.
+// The extension's content script (content.js) runs on this page and bridges
+// custom DOM events to the background worker, which executes reCAPTCHA on labs.google.
+function getRecaptchaToken() {
   return new Promise((resolve, reject) => {
-    window.grecaptcha.ready(() => {
-      window.grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'generate' })
-        .then(resolve)
-        .catch(reject);
-    });
+    if (!window.__HNTR_EXTENSION_INSTALLED) {
+      reject(new Error(
+        'HNTR Flow Bridge extension is not installed. ' +
+        'Please install it from the extension/ folder to generate images.'
+      ));
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      window.removeEventListener('hntr-token-response', onToken);
+      window.removeEventListener('hntr-token-error', onError);
+      reject(new Error('reCAPTCHA token request timed out. Please try again.'));
+    }, 30000);
+
+    function onToken(e) {
+      clearTimeout(timeout);
+      window.removeEventListener('hntr-token-response', onToken);
+      window.removeEventListener('hntr-token-error', onError);
+      resolve(e.detail.token);
+    }
+
+    function onError(e) {
+      clearTimeout(timeout);
+      window.removeEventListener('hntr-token-response', onToken);
+      window.removeEventListener('hntr-token-error', onError);
+      reject(new Error(e.detail.error));
+    }
+
+    window.addEventListener('hntr-token-response', onToken);
+    window.addEventListener('hntr-token-error', onError);
+    window.dispatchEvent(new CustomEvent('hntr-request-token'));
   });
 }
 
@@ -216,8 +225,6 @@ export default function ProjectDetail() {
   useEffect(() => { scenesRef.current = scenes; }, [scenes]);
 
   // ── Initial load ────────────────────────────────────────────────────────────
-  useEffect(() => { loadRecaptcha(); }, []);
-
   useEffect(() => {
     Promise.all([api.getProject(id), api.getStyles()])
       .then(([proj, stls]) => {

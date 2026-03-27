@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "HNTR Flow Bridge",
+  "version": "1.0.0",
+  "description": "Enables image generation in HNTR Automation by bridging reCAPTCHA Enterprise tokens from labs.google",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": [
+    "https://labs.google/*",
+    "https://hntr-automation-production.up.railway.app/*",
+    "http://localhost:*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [{
+    "matches": [
+      "https://hntr-automation-production.up.railway.app/*",
+      "http://localhost:*/*"
+    ],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}
