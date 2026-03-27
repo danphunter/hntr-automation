@@ -9,16 +9,16 @@ import {
   Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
-const RECAPTCHA_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
+const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
 
-// Load reCAPTCHA Enterprise script and return a token for each call.
+// Load reCAPTCHA v3 script and return a token for each call.
 // The script is loaded once; subsequent calls just execute the challenge.
 let recaptchaReady = false;
 function loadRecaptcha() {
-  if (recaptchaReady || document.getElementById('recaptcha-enterprise')) return;
+  if (recaptchaReady || document.getElementById('recaptcha-v3')) return;
   const script = document.createElement('script');
-  script.id = 'recaptcha-enterprise';
-  script.src = `https://www.google.com/recaptcha/enterprise.js?render=${RECAPTCHA_SITE_KEY}`;
+  script.id = 'recaptcha-v3';
+  script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`;
   script.onload = () => { recaptchaReady = true; };
   document.head.appendChild(script);
 }
@@ -26,11 +26,17 @@ function loadRecaptcha() {
 async function getRecaptchaToken() {
   // Wait up to 10 seconds for the script to load
   for (let i = 0; i < 100; i++) {
-    if (window.grecaptcha?.enterprise) break;
+    if (window.grecaptcha?.ready) break;
     await new Promise(r => setTimeout(r, 100));
   }
-  if (!window.grecaptcha?.enterprise) throw new Error('reCAPTCHA failed to load');
-  return window.grecaptcha.enterprise.execute(RECAPTCHA_SITE_KEY, { action: 'generate' });
+  if (!window.grecaptcha?.ready) throw new Error('reCAPTCHA failed to load');
+  return new Promise((resolve, reject) => {
+    window.grecaptcha.ready(() => {
+      window.grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'generate' })
+        .then(resolve)
+        .catch(reject);
+    });
+  });
 }
 
 const STEPS = [
