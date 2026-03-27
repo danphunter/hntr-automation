@@ -255,7 +255,7 @@ export default function Settings() {
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => onChange('image_provider', opt.value)}
+                  onClick={() => { onChange('image_provider', opt.value); api.saveSettings({ image_provider: opt.value }); }}
                   className={`flex-1 rounded-lg border px-4 py-3 text-left transition-colors ${
                     (values.image_provider || 'whisk') === opt.value
                       ? 'border-indigo-500 bg-indigo-900/30 text-white'
