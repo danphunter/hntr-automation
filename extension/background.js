@@ -1,8 +1,10 @@
 // HNTR Flow Bridge - Background Service Worker
-// Receives image generation requests from content-hntr.js, ensures a
-// labs.google/flow tab exists, then delegates to content-labs.js which
-// bridges to inject-flow.js (running in the page's MAIN world with direct
+// Receives image generation requests from content-hntr.js, finds the user's
+// existing signed-in labs.google/fx/* tab, then delegates to content-labs.js
+// which bridges to inject-flow.js (running in the page's MAIN world with direct
 // access to grecaptcha.enterprise).  No scripting.executeScript needed.
+// NOTE: The extension never opens a Flow tab itself — reCAPTCHA only works in
+// a tab where the user is already signed in to Google.
 
 console.log('[HNTR bg] service worker loaded');
 
@@ -44,11 +46,11 @@ async function handleGenerate({ prompt, bearerToken, projectId, seed }) {
 }
 
 async function ensureFlowTab() {
-  // Verify stored tab is still alive and on labs.google/flow.
+  // Verify the stored tab is still alive and on a real Flow workspace page.
   if (flowTabId !== null) {
     try {
       const tab = await chrome.tabs.get(flowTabId);
-      if (tab.url && tab.url.startsWith('https://labs.google/flow')) {
+      if (tab.url && tab.url.startsWith('https://labs.google/fx/')) {
         return flowTabId;
       }
     } catch {
@@ -57,18 +59,19 @@ async function ensureFlowTab() {
     flowTabId = null;
   }
 
-  // Reuse an existing flow tab if one is open.
-  const existing = await chrome.tabs.query({ url: '*://labs.google/flow*' });
+  // Find an existing signed-in Flow workspace tab (labs.google/fx/...).
+  // We never open one ourselves — reCAPTCHA only works when the user is
+  // already signed in, and auto-opening the landing page (labs.google/flow)
+  // won't have the grecaptcha.enterprise token available.
+  const existing = await chrome.tabs.query({ url: '*://labs.google/fx/*' });
   if (existing.length > 0) {
     flowTabId = existing[0].id;
     return flowTabId;
   }
 
-  // Open a fresh tab and wait for it to fully load.
-  const tab = await chrome.tabs.create({ url: 'https://labs.google/flow', active: false });
-  flowTabId = tab.id;
-  await waitForTabLoad(flowTabId);
-  return flowTabId;
+  throw new Error(
+    'No Flow workspace tab found. Please open labs.google/fx/tools/flow and sign in, then try again.'
+  );
 }
 
 function sendTabMessage(tabId, message) {
@@ -80,25 +83,5 @@ function sendTabMessage(tabId, message) {
         resolve(response);
       }
     });
-  });
-}
-
-function waitForTabLoad(tabId) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error('labs.google/flow tab timed out loading'));
-    }, 30000);
-
-    function listener(id, info) {
-      if (id === tabId && info.status === 'complete') {
-        clearTimeout(timeout);
-        chrome.tabs.onUpdated.removeListener(listener);
-        // Extra delay for reCAPTCHA JS and page app to fully initialise,
-        // and for content-labs.js to inject and ready inject-flow.js.
-        setTimeout(resolve, 3000);
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener);
   });
 }
