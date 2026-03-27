@@ -9,8 +9,9 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Use UPLOADS_PATH env var if set, auto-detect /data volume, else local server/uploads.
+const _dataExists = fs.existsSync('/data');
 const UPLOADS_BASE = process.env.UPLOADS_PATH
-  || (fs.existsSync('/data') ? '/data/uploads' : path.join(__dirname, 'uploads'));
+  || (_dataExists ? '/data/uploads' : path.join(__dirname, 'uploads'));
 process.env.UPLOADS_PATH = UPLOADS_BASE; // expose to route files
 for (const sub of ['', 'images', 'references']) {
   const dir = path.join(UPLOADS_BASE, sub);
@@ -61,5 +62,6 @@ app.listen(PORT, () => {
   console.log(`   API: http://localhost:${PORT}/api/health`);
   console.log(`   Mode: ${process.env.NODE_ENV || 'development'}`);
   console.log(`   Uploads: ${UPLOADS_BASE}`);
+  console.log(`   /data exists: ${_dataExists} | UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)'}`);
   console.log(`   Railway env: ${process.env.RAILWAY_ENVIRONMENT || 'not set'}\n`);
 });

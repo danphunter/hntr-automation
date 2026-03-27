@@ -3,11 +3,11 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
 
-// Use DATABASE_PATH env var if explicitly set (e.g. Railway dashboard).
-// Otherwise auto-detect: if /data exists (Railway persistent volume mounted), use it.
-// Fall back to local path for development.
+// Auto-detect Railway persistent volume at /data.
+// DATABASE_PATH env var overrides (set this in Railway dashboard if needed).
+const _dataExists = fs.existsSync('/data');
 const DB_PATH = process.env.DATABASE_PATH
-  || (fs.existsSync('/data') ? '/data/hntr-automation.db' : path.join(__dirname, '..', 'hntr-automation.db'));
+  || (_dataExists ? '/data/hntr-automation.db' : path.join(__dirname, '..', 'hntr-automation.db'));
 let db;
 
 function getDb() {
@@ -180,7 +180,8 @@ function initDb() {
     }
   }
 
-  console.log('✅ Database ready at', DB_PATH);
+  console.log(`✅ Database ready at ${DB_PATH}`);
+  console.log(`   /data exists: ${_dataExists} | DATABASE_PATH env: ${process.env.DATABASE_PATH || '(not set)'}`);
 }
 
 module.exports = { getDb, initDb };

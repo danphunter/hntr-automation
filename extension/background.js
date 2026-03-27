@@ -1,6 +1,7 @@
 // HNTR Flow Bridge - Background Service Worker
 // Receives token requests from our app's content script,
-// opens/reuses a labs.google tab, and executes reCAPTCHA Enterprise there.
+// finds an existing labs.google tab (e.g. GenAIPro's service tab), and executes
+// reCAPTCHA Enterprise there using the already-initialized grecaptcha.enterprise object.
 
 const FLOW_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
@@ -14,20 +15,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function getTokenFromLabs() {
-  // Reuse an existing labs.google tab if available
-  const existing = await chrome.tabs.query({ url: 'https://labs.google/*' });
+  // Prefer any existing labs.google tab — GenAIPro keeps one open with
+  // reCAPTCHA Enterprise already loaded and initialized.
+  const existing = await chrome.tabs.query({ url: '*://labs.google/*' });
   let tabId;
 
   if (existing.length > 0) {
     tabId = existing[0].id;
   } else {
-    // Open labs.google in the background (not focused)
-    const tab = await chrome.tabs.create({ url: 'https://labs.google/', active: false });
+    // No existing tab — open labs.google/flow which bootstraps reCAPTCHA Enterprise.
+    // Keep it in the background; do NOT close it after use so future requests are fast.
+    const tab = await chrome.tabs.create({ url: 'https://labs.google/flow', active: false });
     tabId = tab.id;
     await waitForTabLoad(tabId);
   }
 
-  // Run reCAPTCHA Enterprise in the page's main world so it can access window.grecaptcha
+  // Execute in the page's main world — grecaptcha.enterprise is already there.
+  // Do NOT inject the script ourselves; that produces invalid tokens on a blank page.
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -41,40 +45,22 @@ async function getTokenFromLabs() {
   return result.result;
 }
 
-// This function runs in the labs.google page's main world.
-// It must be self-contained (no closures over extension variables).
+// Runs inside the labs.google page's main world.
+// Assumes grecaptcha.enterprise is already loaded (it is on any labs.google tab).
+// Must be self-contained — no closures over extension variables.
 async function executeRecaptchaInPage(siteKey) {
-  // Load the Enterprise script if not already present
-  if (!document.getElementById('hntr-recaptcha-enterprise')) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.id = 'hntr-recaptcha-enterprise';
-      s.src = `https://www.google.com/recaptcha/enterprise.js?render=${siteKey}`;
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load reCAPTCHA Enterprise script'));
-      document.head.appendChild(s);
-    });
-  }
-
-  // Wait for grecaptcha.enterprise to be available (up to 10s)
+  // Wait up to 10 s for grecaptcha.enterprise.execute to be available.
   for (let i = 0; i < 100; i++) {
-    if (window.grecaptcha?.enterprise?.ready) break;
+    if (window.grecaptcha?.enterprise?.execute) break;
     await new Promise(r => setTimeout(r, 100));
   }
-  if (!window.grecaptcha?.enterprise?.ready) {
-    throw new Error('reCAPTCHA Enterprise did not initialize');
+  if (!window.grecaptcha?.enterprise?.execute) {
+    throw new Error('grecaptcha.enterprise not available on this labs.google tab');
   }
 
-  return new Promise((resolve, reject) => {
-    window.grecaptcha.enterprise.ready(async () => {
-      try {
-        const token = await window.grecaptcha.enterprise.execute(siteKey, { action: 'generate' });
-        resolve(token);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  });
+  // Call execute directly — no need for .ready() wrapper when the API is already up.
+  const token = await window.grecaptcha.enterprise.execute(siteKey, { action: 'generate' });
+  return token;
 }
 
 function waitForTabLoad(tabId) {
@@ -88,8 +74,8 @@ function waitForTabLoad(tabId) {
       if (id === tabId && info.status === 'complete') {
         clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(listener);
-        // Small delay to let page JS initialize
-        setTimeout(resolve, 500);
+        // Extra delay to let the page's reCAPTCHA JS fully initialize.
+        setTimeout(resolve, 1500);
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
