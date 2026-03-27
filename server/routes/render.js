@@ -122,7 +122,12 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
         // Genuine fallback — no image available
         imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
       }
-      scenePaths.push({ path: imgPath, duration: Math.max(scene.duration || 5, 1) });
+      // Calculate clip duration from absolute timestamps so images align with the audio track.
+      // Scene 0: covers 0s → scene0.end_time (includes any pre-roll silence)
+      // Scene i: covers scenes[i-1].end_time → scenes[i].end_time (includes inter-scene gaps)
+      const prevEndTime = i > 0 ? (scenes[i - 1].end_time || 0) : 0;
+      const clipDuration = Math.max((scene.end_time || (prevEndTime + 5)) - prevEndTime, 0.5);
+      scenePaths.push({ path: imgPath, duration: clipDuration });
       renderJobs.get(jobId).progress = Math.round((i / scenes.length) * 10);
     }
 
@@ -139,7 +144,7 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
         `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
         `fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
 
-      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur}s, ${frames} frames)...`);
+      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur.toFixed(2)}s)...`);
 
       try {
         await renderSceneClip(imgPath, clipPath, filter, dur);
