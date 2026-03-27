@@ -8,10 +8,9 @@ const { initDb } = require('./db/database');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// On Railway, use UPLOADS_PATH env var (persistent volume).
-// Detect Railway and default to /data/uploads, else local server/uploads.
+// Use UPLOADS_PATH env var if set, auto-detect /data volume, else local server/uploads.
 const UPLOADS_BASE = process.env.UPLOADS_PATH
-  || (process.env.RAILWAY_ENVIRONMENT ? '/data/uploads' : path.join(__dirname, 'uploads'));
+  || (fs.existsSync('/data') ? '/data/uploads' : path.join(__dirname, 'uploads'));
 process.env.UPLOADS_PATH = UPLOADS_BASE; // expose to route files
 for (const sub of ['', 'images', 'references']) {
   const dir = path.join(UPLOADS_BASE, sub);
