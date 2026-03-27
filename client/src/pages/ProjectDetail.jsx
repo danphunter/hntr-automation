@@ -9,6 +9,30 @@ import {
   Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
+const RECAPTCHA_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
+
+// Load reCAPTCHA Enterprise script and return a token for each call.
+// The script is loaded once; subsequent calls just execute the challenge.
+let recaptchaReady = false;
+function loadRecaptcha() {
+  if (recaptchaReady || document.getElementById('recaptcha-enterprise')) return;
+  const script = document.createElement('script');
+  script.id = 'recaptcha-enterprise';
+  script.src = `https://www.google.com/recaptcha/enterprise.js?render=${RECAPTCHA_SITE_KEY}`;
+  script.onload = () => { recaptchaReady = true; };
+  document.head.appendChild(script);
+}
+
+async function getRecaptchaToken() {
+  // Wait up to 10 seconds for the script to load
+  for (let i = 0; i < 100; i++) {
+    if (window.grecaptcha?.enterprise) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (!window.grecaptcha?.enterprise) throw new Error('reCAPTCHA failed to load');
+  return window.grecaptcha.enterprise.execute(RECAPTCHA_SITE_KEY, { action: 'generate' });
+}
+
 const STEPS = [
   { id: 1, label: 'Project Details', icon: FileText },
   { id: 2, label: 'Upload Audio',    icon: Mic },
@@ -186,6 +210,8 @@ export default function ProjectDetail() {
   useEffect(() => { scenesRef.current = scenes; }, [scenes]);
 
   // ── Initial load ────────────────────────────────────────────────────────────
+  useEffect(() => { loadRecaptcha(); }, []);
+
   useEffect(() => {
     Promise.all([api.getProject(id), api.getStyles()])
       .then(([proj, stls]) => {
@@ -378,7 +404,8 @@ export default function ProjectDetail() {
         setGeneratingId(scene.id);
         setGenProgress({ current: i + 1, total: pending.length });
         try {
-          const result = await api.generateImage(scene.id);
+          const recaptchaToken = await getRecaptchaToken();
+          const result = await api.generateImage(scene.id, recaptchaToken);
           setScenes(prev => prev.map(s =>
             s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
           ));
@@ -397,7 +424,8 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      const result = await api.generateImage(sceneId);
+      const recaptchaToken = await getRecaptchaToken();
+      const result = await api.generateImage(sceneId, recaptchaToken);
       setScenes(prev => prev.map(s =>
         s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated' } : s
       ));

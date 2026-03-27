@@ -66,8 +66,9 @@ export const api = {
   deleteStyleRef: (refId) => request('DELETE', `/styles/references/${refId}`),
 
   // Image generation
-  generateImage: (sceneId) => request('POST', `/generate/image/${sceneId}`),
+  generateImage: (sceneId, recaptchaToken) => request('POST', `/generate/image/${sceneId}`, { recaptchaToken }),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
+  getFlowConfig: () => request('GET', '/generate/flow-config'),
 
   // Flow tokens (stored in whisk_tokens table, same API paths)
   getWhiskTokens: () => request('GET', '/generate/whisk-tokens'),

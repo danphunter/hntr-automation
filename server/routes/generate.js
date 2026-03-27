@@ -10,6 +10,8 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
+const RECAPTCHA_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
+// Default Flow project ID captured from labs.google — can be overridden via settings/env
 const FLOW_PROJECT_ID_DEFAULT = '0b18c780-3509-4d6e-84c6-dc4528e2b92b';
 
 function getSettings(db) {
@@ -19,9 +21,7 @@ function getSettings(db) {
 
 // ── Prompt sanitization ───────────────────────────────────────────────────────
 
-// Google Imagen's safety filter rejects prompts with violence/weapons/death references.
-// Replace flagged words with safe visual alternatives before sending to Flow.
-const WORD_REPLACEMENTS = {
+const WHISK_WORD_REPLACEMENTS = {
   'blood': 'red mist', 'bloody': 'dramatic', 'gore': 'detail', 'gory': 'intense',
   'dead': 'still', 'death': 'stillness', 'die': 'fade', 'dying': 'fading',
   'kill': 'halt', 'killing': 'halting', 'killer': 'figure', 'killed': 'fallen',
@@ -44,10 +44,9 @@ const WORD_REPLACEMENTS = {
 
 function sanitizePrompt(prompt) {
   let sanitized = prompt;
-  for (const [word, replacement] of Object.entries(WORD_REPLACEMENTS)) {
+  for (const [word, replacement] of Object.entries(WHISK_WORD_REPLACEMENTS)) {
     sanitized = sanitized.replace(new RegExp(`\\b${word}\\b`, 'gi'), replacement);
   }
-  // Add a safe art framing prefix if prompt doesn't already start with one
   if (!/^(a |an )?(digital|cinematic|artistic|photographic|illustration|painting|dramatic)/i.test(sanitized.trim())) {
     sanitized = `A cinematic still of ${sanitized}`;
   }
@@ -55,19 +54,17 @@ function sanitizePrompt(prompt) {
 }
 
 function makeSimpleFallbackPrompt(prompt) {
-  // Strip everything down to nouns/adjectives, keep under 60 chars, add safe prefix
   const stripped = prompt
     .replace(/[^a-zA-Z0-9\s,]/g, '')
-    .replace(/\b\w{1,2}\b/g, '') // remove tiny words
+    .replace(/\b\w{1,2}\b/g, '')
     .trim()
     .slice(0, 80);
   return `A digital illustration of ${stripped}, dramatic lighting, cinematic composition`;
 }
 
-// ── Flow token rotation ───────────────────────────────────────────────────────
+// ── Token rotation ────────────────────────────────────────────────────────────
 
-function getNextFlowToken(db) {
-  // Auto-reset tokens whose 30-second cooldown has expired
+function getNextToken(db) {
   db.prepare(`
     UPDATE whisk_tokens SET status = 'active', last_error = NULL
     WHERE status = 'rate_limited'
@@ -83,13 +80,13 @@ function getNextFlowToken(db) {
   `).get();
 }
 
-function markFlowTokenUsed(db, tokenId) {
+function markTokenUsed(db, tokenId) {
   db.prepare(`
     UPDATE whisk_tokens SET usage_count = usage_count + 1, last_used = CURRENT_TIMESTAMP WHERE id = ?
   `).run(tokenId);
 }
 
-function markFlowTokenRateLimited(db, tokenId, errMsg) {
+function markTokenRateLimited(db, tokenId, errMsg) {
   db.prepare(`
     UPDATE whisk_tokens
     SET status = 'rate_limited',
@@ -99,21 +96,23 @@ function markFlowTokenRateLimited(db, tokenId, errMsg) {
   `).run(errMsg, tokenId);
 }
 
-// ── Google Flow API integration ───────────────────────────────────────────────
-//
-// Flow uses the same Google OAuth tokens (ya29.xxx) as Whisk.
-// Image generation returns a signed GCS URL (fifeUrl) to download the JPEG from.
-// reCAPTCHA token is sent as empty string — the invisible reCAPTCHA in the Flow
-// web app generates it client-side but server-to-server calls work without it.
-async function generateViaFlow(token, prompt, projectId, imageInputs = []) {
+// ── Flow API (Google AI Sandbox) ──────────────────────────────────────────────
+// The client generates a reCAPTCHA Enterprise token from the browser, sends it
+// to our server, and the server includes it in the Flow API request.
+// This works because the reCAPTCHA token is valid regardless of which machine
+// sends it to the API — it's tied to the site key, not the HTTP origin.
+// The server sets origin: https://labs.google in headers (Node.js is not
+// subject to browser CORS restrictions when making outbound requests).
+
+async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds, flowProjectId) {
   const fetch = (await import('node-fetch')).default;
 
   const clientContext = {
     recaptchaContext: {
-      token: '',
+      token: recaptchaToken,
       applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB',
     },
-    projectId,
+    projectId: flowProjectId,
     tool: 'PINHOLE',
     sessionId: `;${Date.now()}`,
   };
@@ -128,71 +127,91 @@ async function generateViaFlow(token, prompt, projectId, imageInputs = []) {
       imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
       structuredPrompt: { parts: [{ text: prompt }] },
       seed: Math.floor(Math.random() * 1000000),
-      imageInputs,
+      imageInputs: (referenceIds || []).map(id => ({
+        imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
+        name: id,
+      })),
     }],
   };
 
-  const endpoint = `https://aisandbox-pa.googleapis.com/v1/projects/${projectId}/flowMedia:batchGenerateImages`;
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'accept': '*/*',
-      'accept-language': 'en-US,en;q=0.9',
-      'authorization': 'Bearer ' + token,
-      'content-type': 'text/plain;charset=UTF-8',
-      'origin': 'https://labs.google',
-      'referer': 'https://labs.google/',
-      'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'cross-site',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-      'x-browser-channel': 'stable',
-      'x-browser-copyright': 'Copyright 2026 Google LLC. All rights reserved.',
-      'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
-      'x-browser-year': '2026',
-      'x-client-data': 'CPyUywE=',
-    },
-    body: JSON.stringify(body),
-  });
+  const res = await fetch(
+    `https://aisandbox-pa.googleapis.com/v1/projects/${flowProjectId}/flowMedia:batchGenerateImages`,
+    {
+      method: 'POST',
+      headers: {
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.9',
+        'authorization': 'Bearer ' + bearerToken,
+        'content-type': 'application/json',
+        'origin': 'https://labs.google',
+        'referer': 'https://labs.google/',
+        'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+        'x-browser-channel': 'stable',
+        'x-browser-copyright': 'Copyright 2026 Google LLC. All rights reserved.',
+        'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
+        'x-browser-year': '2026',
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (res.status === 429 || res.status === 403) {
     const text = await res.text();
-    console.log('Flow rate-limited:', res.status, text.slice(0, 500));
+    console.log('Flow rate-limited/forbidden:', res.status, text.slice(0, 500));
     throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
   }
 
   if (!res.ok) {
     const text = await res.text();
     console.log('Flow error:', res.status, text.slice(0, 500));
-    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION') || text.includes('UNSAFE')) {
+    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION')) {
       throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
     }
     throw new Error(`FLOW_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  console.log('Flow response (first 500):', JSON.stringify(data).slice(0, 500));
+  const fifeUrl = data?.media?.[0]?.image?.generatedImage?.fifeUrl;
+  if (!fifeUrl) {
+    console.log('Flow response missing fifeUrl:', JSON.stringify(data).slice(0, 500));
+    return null;
+  }
 
-  // Response: { media: [{ image: { generatedImage: { fifeUrl: "..." } } }] }
-  return data?.media?.[0]?.image?.generatedImage?.fifeUrl || null;
+  // Download image from the signed GCS URL
+  const imgRes = await fetch(fifeUrl);
+  if (!imgRes.ok) {
+    throw new Error(`Failed to download image from fifeUrl: ${imgRes.status}`);
+  }
+  return await imgRes.buffer();
 }
 
-async function saveImageFromUrl(fifeUrl) {
-  const fetch = (await import('node-fetch')).default;
+async function saveImageFromBuffer(buffer) {
   const filename = `img-${uuidv4()}.jpg`;
   const imgPath = path.join(IMAGES_DIR, filename);
-  const res = await fetch(fifeUrl);
-  if (!res.ok) throw new Error(`Failed to download image from Flow: ${res.status}`);
-  const buffer = await res.buffer();
   fs.writeFileSync(imgPath, buffer);
   return { filename, imgPath };
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
+
+// GET /api/generate/flow-config — returns Flow config for the client
+router.get('/flow-config', authMiddleware, (req, res) => {
+  const db = getDb();
+  const settings = getSettings(db);
+  const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT || null;
+  const wt = getNextToken(db);
+  res.json({
+    flowProjectId,
+    siteKey: RECAPTCHA_SITE_KEY,
+    hasToken: !!wt,
+  });
+});
 
 // POST /api/generate/image/:sceneId
 router.post('/image/:sceneId', authMiddleware, async (req, res) => {
@@ -205,34 +224,38 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  // Build prompt with style prefix/suffix, then sanitize for the safety filter
+  const { recaptchaToken } = req.body;
+  if (!recaptchaToken) {
+    return res.status(400).json({ error: 'recaptchaToken is required. The client must obtain a reCAPTCHA Enterprise token before calling this endpoint.' });
+  }
+
+  const settings = getSettings(db);
+  const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
+
+  // Build prompt with style prefix/suffix, then sanitize
   let rawPrompt = scene.image_prompt || scene.text;
-  let imageInputs = [];
+  let referenceIds = [];
+
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
-      // Collect any reference images that have been synced to Flow
-      const refs = db.prepare(
-        "SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL AND flow_media_id != ''"
-      ).all(project.style_id);
-      imageInputs = refs.map(r => ({ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: r.flow_media_id }));
+      // Include style reference images that have a flow_media_id
+      const refs = db.prepare('SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL').all(project.style_id);
+      referenceIds = refs.map(r => r.flow_media_id);
     }
   }
   let prompt = sanitizePrompt(rawPrompt);
 
-  const settings = getSettings(db);
-  const flowProjectId = settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
-
-  // Try Flow tokens in rotation order (getNextFlowToken auto-resets expired cooldowns)
-  let fifeUrl = null;
+  // Token rotation
+  let imageBuffer = null;
   let source = 'unknown';
   let triedCount = 0;
   let unsafeContentRetried = false;
 
   while (true) {
-    const ft = getNextFlowToken(db);
-    if (!ft) {
+    const wt = getNextToken(db);
+    if (!wt) {
       const cooldown = db.prepare(`
         SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs
         FROM whisk_tokens
@@ -240,46 +263,43 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       `).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
       const msg = triedCount === 0
-        ? 'No active Flow tokens — add a token in Settings'
-        : 'All Flow tokens are rate-limited — add a fresh token in Settings';
+        ? 'No active tokens — add a token in Settings'
+        : 'All tokens are rate-limited — add a fresh token in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
 
     triedCount++;
     try {
-      fifeUrl = await generateViaFlow(ft.token, prompt, flowProjectId, imageInputs);
-      if (fifeUrl) {
-        markFlowTokenUsed(db, ft.id);
-        source = `flow:${ft.label}`;
+      const buffer = await generateViaFlow(wt.token, recaptchaToken, prompt, referenceIds, flowProjectId);
+      if (buffer) {
+        markTokenUsed(db, wt.id);
+        imageBuffer = buffer;
+        source = `flow:${wt.label}`;
         break;
       }
-      // null result — mark this token as having an error and try next
-      markFlowTokenRateLimited(db, ft.id, 'Empty response from Flow');
+      markTokenRateLimited(db, wt.id, 'Empty response from Flow');
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
-        markFlowTokenRateLimited(db, ft.id, err.message.slice(12));
-        console.log(`Flow token "${ft.label}" rate limited, rotating...`);
+        markTokenRateLimited(db, wt.id, err.message.slice(12));
+        console.log(`Token "${wt.label}" rate limited, rotating...`);
       } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
-        // Safety filter triggered — retry once with a stripped-down fallback prompt
-        console.warn(`Flow safety filter triggered for prompt, retrying with fallback. Token: "${ft.label}"`);
+        console.warn(`Safety filter triggered, retrying with fallback prompt. Token: "${wt.label}"`);
         unsafeContentRetried = true;
         prompt = makeSimpleFallbackPrompt(rawPrompt);
         console.log('Fallback prompt:', prompt);
-        triedCount--; // don't count this as a token exhaustion attempt
+        triedCount--;
         continue;
       } else {
-        // Non-rate-limit error: mark rate-limited briefly so we skip it this round
-        markFlowTokenRateLimited(db, ft.id, err.message);
-        console.error(`Flow token "${ft.label}" error:`, err.message);
+        markTokenRateLimited(db, wt.id, err.message);
+        console.error(`Token "${wt.label}" error:`, err.message);
       }
     }
 
-    // Safety: if we've tried more tokens than exist in the DB, stop
     const totalTokens = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
     if (triedCount >= totalTokens) break;
   }
 
-  if (!fifeUrl) {
+  if (!imageBuffer) {
     const cooldown = db.prepare(`
       SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs
       FROM whisk_tokens
@@ -287,14 +307,12 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     `).get();
     const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
     return res.status(429).json({
-      error: 'All Flow tokens are rate-limited or expired — add a fresh token in Settings',
+      error: 'All tokens are rate-limited or expired — add a fresh token in Settings',
       retry_after: retrySecs,
     });
   }
 
-  // Download the image from the signed GCS URL and save locally
-  const { filename, imgPath } = await saveImageFromUrl(fifeUrl);
-
+  const { filename, imgPath } = await saveImageFromBuffer(imageBuffer);
   const localUrl = `/api/generate/image-file/${filename}`;
   db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?')
     .run(localUrl, imgPath, 'generated', scene.id);
@@ -303,10 +321,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 });
 
 // GET /api/generate/image-file/:filename
-// No auth required — filenames are UUID-based (unguessable) and contain no sensitive data.
-// Browser <img> tags load images without Authorization headers, so auth here breaks previews.
 router.get('/image-file/:filename', (req, res) => {
-  // Use path.basename to strip any ../ traversal attempts before joining
   const imgPath = path.join(IMAGES_DIR, path.basename(req.params.filename));
   if (!imgPath.startsWith(IMAGES_DIR)) return res.status(404).json({ error: 'Not found' });
   if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Not found' });
@@ -370,10 +385,8 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   res.json({ scenes: updated, demo: false });
 });
 
-// ── Flow Token Management ─────────────────────────────────────────────────────
-// Tokens are stored in the whisk_tokens table (same schema, just rebranded to Flow tokens).
+// ── Token Management ──────────────────────────────────────────────────────────
 
-// GET /api/generate/whisk-tokens
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
@@ -381,15 +394,11 @@ router.get('/whisk-tokens', authMiddleware, (req, res) => {
   res.json(tokens);
 });
 
-// POST /api/generate/whisk-tokens
 router.post('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const { label, token } = req.body;
   if (!label || !token) return res.status(400).json({ error: 'label and token required' });
-
-  // Trim whitespace and strip any "Bearer " prefix the user may have pasted
   const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
-
   const db = getDb();
   const id = uuidv4();
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM whisk_tokens').get().m;
@@ -397,19 +406,16 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
   res.status(201).json({ id, label, usage_count: 0, status: 'active', sort_order: maxOrder + 1 });
 });
 
-// PUT /api/generate/whisk-tokens/:id
 router.put('/whisk-tokens/:id', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
   const { label, status } = req.body;
-  // Trim and strip "Bearer " prefix if a new token value was provided
   const cleanToken = req.body.token ? req.body.token.trim().replace(/^Bearer\s+/i, '') : undefined;
   db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status) WHERE id = ?').run(label, cleanToken, status, req.params.id);
   const t = db.prepare('SELECT id, label, usage_count, status, last_used, last_error, rate_limited_until, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
   res.json(t);
 });
 
-// DELETE /api/generate/whisk-tokens/:id
 router.delete('/whisk-tokens/:id', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
@@ -417,74 +423,11 @@ router.delete('/whisk-tokens/:id', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
-// POST /api/generate/whisk-tokens/:id/reset — reset rate limit
 router.post('/whisk-tokens/:id/reset', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
   db.prepare("UPDATE whisk_tokens SET status = 'active', last_error = NULL WHERE id = ?").run(req.params.id);
   res.json({ success: true });
-});
-
-// ── Reference image upload to Flow ───────────────────────────────────────────
-
-// POST /api/generate/upload-reference
-// Uploads a style reference image to Flow and stores the returned media ID.
-// Body: { refId: "<style_reference id>" } — reads the file from disk and uploads it.
-router.post('/upload-reference', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const { refId } = req.body;
-  if (!refId) return res.status(400).json({ error: 'refId required' });
-
-  const db = getDb();
-  const ref = db.prepare('SELECT * FROM style_references WHERE id = ?').get(refId);
-  if (!ref) return res.status(404).json({ error: 'Reference not found' });
-  if (!fs.existsSync(ref.file_path)) return res.status(404).json({ error: 'Reference file not found on disk' });
-
-  const ft = getNextFlowToken(db);
-  if (!ft) return res.status(429).json({ error: 'No active Flow tokens — add a token in Settings' });
-
-  const settings = getSettings(db);
-  const flowProjectId = settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
-
-  const imageBytes = fs.readFileSync(ref.file_path).toString('base64');
-  const ext = path.extname(ref.filename).toLowerCase();
-  const mimeType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
-
-  const fetch = (await import('node-fetch')).default;
-  const uploadRes = await fetch('https://aisandbox-pa.googleapis.com/v1/flow/uploadImage', {
-    method: 'POST',
-    headers: {
-      'accept': '*/*',
-      'authorization': 'Bearer ' + ft.token,
-      'content-type': 'application/json',
-      'origin': 'https://labs.google',
-      'referer': 'https://labs.google/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-    },
-    body: JSON.stringify({
-      clientContext: { projectId: flowProjectId, tool: 'PINHOLE' },
-      fileName: ref.filename,
-      imageBytes,
-      mimeType,
-      isUserUploaded: true,
-      isHidden: false,
-    }),
-  });
-
-  if (!uploadRes.ok) {
-    const text = await uploadRes.text();
-    console.error('Flow upload error:', uploadRes.status, text.slice(0, 500));
-    return res.status(uploadRes.status).json({ error: `Flow upload failed: ${text.slice(0, 200)}` });
-  }
-
-  const data = await uploadRes.json();
-  const mediaId = data?.media?.name;
-  if (!mediaId) return res.status(500).json({ error: 'No media ID in Flow upload response' });
-
-  // Store the Flow media ID on the style reference record
-  db.prepare("UPDATE style_references SET flow_media_id = ? WHERE id = ?").run(mediaId, refId);
-
-  res.json({ mediaId, refId });
 });
 
 module.exports = router;
