@@ -67,6 +67,7 @@ export const api = {
 
   // Image generation
   generateImage: (sceneId, recaptchaToken) => request('POST', `/generate/image/${sceneId}`, { recaptchaToken }),
+  saveImage: (sceneId, fifeUrl) => request('POST', '/generate/save-image', { sceneId, fifeUrl }),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
   getFlowConfig: () => request('GET', '/generate/flow-config'),
 

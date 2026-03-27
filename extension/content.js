@@ -14,17 +14,25 @@ document.addEventListener('hntr-ping', () => {
   document.dispatchEvent(new CustomEvent('hntr-pong'));
 });
 
-// Handle token requests
-document.addEventListener('hntr-request-token', async () => {
+// Handle image generation requests
+document.addEventListener('hntr-generate-image', async (e) => {
+  const { prompt, bearerToken, projectId, seed, requestId } = e.detail;
+
   // Retry up to 3 times. In MV3, the service worker may need a moment to wake
   // up from idle — "Could not establish connection" is the symptom.
   let lastError = 'Failed to communicate with extension background';
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 300 * attempt));
-    const result = await sendMessageToBackground({ action: 'getRecaptchaToken' });
+    const result = await sendMessageToBackground({
+      action: 'generateImage',
+      prompt,
+      bearerToken,
+      projectId,
+      seed,
+    });
     if (result.ok) {
-      document.dispatchEvent(new CustomEvent('hntr-token-response', {
-        detail: { token: result.token },
+      document.dispatchEvent(new CustomEvent('hntr-generate-result', {
+        detail: { fifeUrl: result.fifeUrl, requestId },
       }));
       return;
     }
@@ -35,8 +43,8 @@ document.addEventListener('hntr-request-token', async () => {
       lastError.includes('Receiving end does not exist');
     if (!isConnectionError) break;
   }
-  document.dispatchEvent(new CustomEvent('hntr-token-error', {
-    detail: { error: lastError },
+  document.dispatchEvent(new CustomEvent('hntr-generate-error', {
+    detail: { error: lastError, requestId },
   }));
 });
 
@@ -46,7 +54,7 @@ function sendMessageToBackground(message) {
       if (chrome.runtime.lastError) {
         resolve({ ok: false, error: chrome.runtime.lastError.message });
       } else if (response?.success) {
-        resolve({ ok: true, token: response.token });
+        resolve({ ok: true, fifeUrl: response.fifeUrl });
       } else {
         resolve({ ok: false, error: response?.error || 'Unknown error from background' });
       }

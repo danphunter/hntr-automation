@@ -24,8 +24,10 @@ function checkExtension() {
   });
 }
 
-// Get a reCAPTCHA Enterprise token via the HNTR Flow Bridge Chrome extension.
-async function getRecaptchaToken() {
+// Generate an image via the HNTR Flow Bridge Chrome extension.
+// The extension runs the full operation (reCAPTCHA + Flow API call) from the
+// labs.google tab, then returns the fifeUrl of the generated image.
+async function generateImageViaExtension(prompt, bearerToken, projectId, seed) {
   const installed = await checkExtension();
   if (!installed) {
     throw new Error(
@@ -35,29 +37,34 @@ async function getRecaptchaToken() {
   }
 
   return new Promise((resolve, reject) => {
+    const requestId = `req-${Date.now()}-${Math.random()}`;
     const timeout = setTimeout(() => {
-      document.removeEventListener('hntr-token-response', onToken);
-      document.removeEventListener('hntr-token-error', onError);
-      reject(new Error('reCAPTCHA token request timed out. Please try again.'));
-    }, 30000);
+      document.removeEventListener('hntr-generate-result', onResult);
+      document.removeEventListener('hntr-generate-error', onError);
+      reject(new Error('Image generation timed out. Please try again.'));
+    }, 60000);
 
-    function onToken(e) {
+    function onResult(e) {
+      if (e.detail.requestId !== requestId) return;
       clearTimeout(timeout);
-      document.removeEventListener('hntr-token-response', onToken);
-      document.removeEventListener('hntr-token-error', onError);
-      resolve(e.detail.token);
+      document.removeEventListener('hntr-generate-result', onResult);
+      document.removeEventListener('hntr-generate-error', onError);
+      resolve(e.detail.fifeUrl);
     }
 
     function onError(e) {
+      if (e.detail.requestId !== requestId) return;
       clearTimeout(timeout);
-      document.removeEventListener('hntr-token-response', onToken);
-      document.removeEventListener('hntr-token-error', onError);
+      document.removeEventListener('hntr-generate-result', onResult);
+      document.removeEventListener('hntr-generate-error', onError);
       reject(new Error(e.detail.error));
     }
 
-    document.addEventListener('hntr-token-response', onToken);
-    document.addEventListener('hntr-token-error', onError);
-    document.dispatchEvent(new CustomEvent('hntr-request-token'));
+    document.addEventListener('hntr-generate-result', onResult);
+    document.addEventListener('hntr-generate-error', onError);
+    document.dispatchEvent(new CustomEvent('hntr-generate-image', {
+      detail: { prompt, bearerToken, projectId, seed, requestId },
+    }));
   });
 }
 
@@ -421,6 +428,12 @@ export default function ProjectDetail() {
         }
       }
 
+      // Get flow config (bearer token + project ID) once before the loop
+      const flowConfig = await api.getFlowConfig();
+      if (!flowConfig.bearerToken) {
+        throw new Error('No active bearer token. Please add a token in Settings.');
+      }
+
       // Generate images for pending scenes
       const pending = workingScenes.filter(s => s.status !== 'generated');
       setGenProgress({ current: 0, total: pending.length });
@@ -430,8 +443,10 @@ export default function ProjectDetail() {
         setGeneratingId(scene.id);
         setGenProgress({ current: i + 1, total: pending.length });
         try {
-          const recaptchaToken = await getRecaptchaToken();
-          const result = await api.generateImage(scene.id, recaptchaToken);
+          const prompt = scene.image_prompt || scene.text;
+          const seed = Math.floor(Math.random() * 1000000);
+          const fifeUrl = await generateImageViaExtension(prompt, flowConfig.bearerToken, flowConfig.flowProjectId, seed);
+          const result = await api.saveImage(scene.id, fifeUrl);
           setScenes(prev => prev.map(s =>
             s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
           ));
@@ -450,8 +465,15 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      const recaptchaToken = await getRecaptchaToken();
-      const result = await api.generateImage(sceneId, recaptchaToken);
+      const flowConfig = await api.getFlowConfig();
+      if (!flowConfig.bearerToken) {
+        throw new Error('No active bearer token. Please add a token in Settings.');
+      }
+      const scene = scenes.find(s => s.id === sceneId);
+      const prompt = scene?.image_prompt || scene?.text || '';
+      const seed = Math.floor(Math.random() * 1000000);
+      const fifeUrl = await generateImageViaExtension(prompt, flowConfig.bearerToken, flowConfig.flowProjectId, seed);
+      const result = await api.saveImage(sceneId, fifeUrl);
       setScenes(prev => prev.map(s =>
         s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated' } : s
       ));
