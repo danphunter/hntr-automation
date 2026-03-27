@@ -5,6 +5,27 @@
 
 const FLOW_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
+// Intercept fetch to capture the bearer token from Flow's own requests
+let capturedBearerToken = null;
+const originalFetch = window.fetch;
+window.fetch = function(...args) {
+  const [url, options] = args;
+  if (options && options.headers) {
+    const headers = options.headers;
+    let authHeader = null;
+    if (headers instanceof Headers) {
+      authHeader = headers.get('authorization');
+    } else if (typeof headers === 'object') {
+      authHeader = headers['authorization'] || headers['Authorization'];
+    }
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      capturedBearerToken = authHeader.replace('Bearer ', '');
+      console.log('[HNTR inject] Captured bearer token (first 20 chars):', capturedBearerToken.substring(0, 20));
+    }
+  }
+  return originalFetch.apply(this, args);
+};
+
 function waitForRecaptcha(maxWait) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -80,12 +101,17 @@ window.addEventListener('hntr-flow-execute', async (e) => {
       }],
     };
 
-    const response = await fetch(
+    if (!capturedBearerToken) {
+      respond({ error: 'No bearer token captured yet. Please generate one image in Flow first, then retry.' });
+      return;
+    }
+
+    const response = await originalFetch(
       `https://aisandbox-pa.googleapis.com/v1/projects/${projectId}/flowMedia:batchGenerateImages`,
       {
         method: 'POST',
-        credentials: 'include',
         headers: {
+          'authorization': `Bearer ${capturedBearerToken}`,
           'content-type': 'text/plain;charset=UTF-8',
         },
         body: JSON.stringify(body),
