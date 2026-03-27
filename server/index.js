@@ -58,10 +58,13 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
+  const dbPath = process.env.DATABASE_PATH
+    || (_dataExists ? '/data/hntr-automation.db' : path.join(__dirname, 'hntr-automation.db'));
   console.log(`\n🚀 HNTR Automation Server running on http://localhost:${PORT}`);
   console.log(`   API: http://localhost:${PORT}/api/health`);
   console.log(`   Mode: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   Uploads: ${UPLOADS_BASE}`);
-  console.log(`   /data exists: ${_dataExists} | UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)'}`);
+  console.log(`   /data exists: ${_dataExists}`);
+  console.log(`   DB path: ${dbPath} (DATABASE_PATH env: ${process.env.DATABASE_PATH || '(not set)'})`);
+  console.log(`   Uploads: ${UPLOADS_BASE} (UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)'})`);
   console.log(`   Railway env: ${process.env.RAILWAY_ENVIRONMENT || 'not set'}\n`);
 });

@@ -407,6 +407,25 @@ export default function ProjectDetail() {
   }
 
   // ── Step 4 ──────────────────────────────────────────────────────────────────
+
+  // Generate a single image for a scene. Uses Flow (extension) or Whisk (server)
+  // depending on the image_provider setting returned by flow-config.
+  async function generateOneImage(scene, flowConfig) {
+    if (flowConfig.imageProvider === 'flow') {
+      // Flow path: extension does full generation, returns fifeUrl
+      if (!flowConfig.bearerToken) {
+        throw new Error('No active bearer token. Please add a token in Settings.');
+      }
+      const prompt = scene.image_prompt || scene.text;
+      const seed = Math.floor(Math.random() * 1000000);
+      const fifeUrl = await generateImageViaExtension(prompt, flowConfig.bearerToken, flowConfig.flowProjectId, seed);
+      return api.saveImage(scene.id, fifeUrl);
+    } else {
+      // Whisk path: server handles generation directly, no extension needed
+      return api.generateImage(scene.id);
+    }
+  }
+
   async function handleAutoGenerate(initialScenes) {
     setGeneratingAll(true);
     setError('');
@@ -428,11 +447,7 @@ export default function ProjectDetail() {
         }
       }
 
-      // Get flow config (bearer token + project ID) once before the loop
       const flowConfig = await api.getFlowConfig();
-      if (!flowConfig.bearerToken) {
-        throw new Error('No active bearer token. Please add a token in Settings.');
-      }
 
       // Generate images for pending scenes
       const pending = workingScenes.filter(s => s.status !== 'generated');
@@ -443,10 +458,7 @@ export default function ProjectDetail() {
         setGeneratingId(scene.id);
         setGenProgress({ current: i + 1, total: pending.length });
         try {
-          const prompt = scene.image_prompt || scene.text;
-          const seed = Math.floor(Math.random() * 1000000);
-          const fifeUrl = await generateImageViaExtension(prompt, flowConfig.bearerToken, flowConfig.flowProjectId, seed);
-          const result = await api.saveImage(scene.id, fifeUrl);
+          const result = await generateOneImage(scene, flowConfig);
           setScenes(prev => prev.map(s =>
             s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
           ));
@@ -466,14 +478,8 @@ export default function ProjectDetail() {
     try {
       await api.saveScenes(id, scenes);
       const flowConfig = await api.getFlowConfig();
-      if (!flowConfig.bearerToken) {
-        throw new Error('No active bearer token. Please add a token in Settings.');
-      }
       const scene = scenes.find(s => s.id === sceneId);
-      const prompt = scene?.image_prompt || scene?.text || '';
-      const seed = Math.floor(Math.random() * 1000000);
-      const fifeUrl = await generateImageViaExtension(prompt, flowConfig.bearerToken, flowConfig.flowProjectId, seed);
-      const result = await api.saveImage(sceneId, fifeUrl);
+      const result = await generateOneImage(scene, flowConfig);
       setScenes(prev => prev.map(s =>
         s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated' } : s
       ));

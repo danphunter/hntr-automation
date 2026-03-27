@@ -244,6 +244,36 @@ export default function Settings() {
       </form>
 
       <div className="mt-6 space-y-6">
+        <Section title="Image Generation — Provider">
+          <div>
+            <label className="label">Image Provider</label>
+            <div className="flex gap-2 mt-1">
+              {[
+                { value: 'whisk', label: 'Whisk', desc: 'Imagen 3.5 via Whisk API — stable, no extension needed' },
+                { value: 'flow', label: 'Flow', desc: 'NARWHAL model via Flow API — requires HNTR extension' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => onChange('image_provider', opt.value)}
+                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-colors ${
+                    (values.image_provider || 'whisk') === opt.value
+                      ? 'border-indigo-500 bg-indigo-900/30 text-white'
+                      : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  <div className="font-medium text-sm">{opt.label}</div>
+                  <div className="text-xs mt-0.5 opacity-70">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              <strong className="text-gray-400">Whisk</strong> is the default and works without any browser extension.{' '}
+              Switch to <strong className="text-gray-400">Flow</strong> to test the NARWHAL model (requires the HNTR Flow Bridge extension).
+            </p>
+          </div>
+        </Section>
+
         <Section title="Image Generation — Google Flow">
           <div>
             <label className="label">Flow Project ID</label>

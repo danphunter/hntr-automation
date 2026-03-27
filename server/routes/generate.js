@@ -96,6 +96,64 @@ function markTokenRateLimited(db, tokenId, errMsg) {
   `).run(errMsg, tokenId);
 }
 
+// ── Whisk API ────────────────────────────────────────────────────────────────
+
+async function generateViaWhisk(bearerToken, prompt) {
+  const fetch = (await import('node-fetch')).default;
+
+  const body = {
+    clientContext: {
+      workflowId: uuidv4(),
+      tool: 'BACKBONE',
+      sessionId: `;${Date.now()}`,
+    },
+    imageModelSettings: {
+      imageModel: 'IMAGEN_3_5',
+      aspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+    },
+    seed: Math.floor(Math.random() * 1000000),
+    prompt,
+    mediaCategory: 'MEDIA_CATEGORY_BOARD',
+  };
+
+  const res = await fetch('https://aisandbox-pa.googleapis.com/v1/whisk:generateImage', {
+    method: 'POST',
+    headers: {
+      'accept': '*/*',
+      'accept-language': 'en-US,en;q=0.9',
+      'authorization': 'Bearer ' + bearerToken,
+      'content-type': 'application/json',
+      'origin': 'https://labs.google',
+      'referer': 'https://labs.google/',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (res.status === 429 || res.status === 403) {
+    const text = await res.text();
+    console.log('Whisk rate-limited/forbidden:', res.status, text.slice(0, 500));
+    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.log('Whisk error:', res.status, text.slice(0, 500));
+    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION') || text.includes('SAFETY') || text.includes('BLOCKED')) {
+      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
+    }
+    throw new Error(`WHISK_ERROR:${res.status}:${text.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const encodedImage = data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage;
+  if (!encodedImage) {
+    console.log('Whisk response missing encodedImage:', JSON.stringify(data).slice(0, 500));
+    return null;
+  }
+  return Buffer.from(encodedImage, 'base64');
+}
+
 // ── Flow API (Google AI Sandbox) ──────────────────────────────────────────────
 // The client generates a reCAPTCHA Enterprise token from the browser, sends it
 // to our server, and the server includes it in the Flow API request.
@@ -200,16 +258,18 @@ async function saveImageFromBuffer(buffer) {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// GET /api/generate/flow-config — returns Flow config for the client
+// GET /api/generate/flow-config — returns image generation config for the client
 router.get('/flow-config', authMiddleware, (req, res) => {
   const db = getDb();
   const settings = getSettings(db);
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT || null;
+  const imageProvider = settings.image_provider || 'whisk';
   const wt = getNextToken(db);
   res.json({
     flowProjectId,
     siteKey: RECAPTCHA_SITE_KEY,
     hasToken: !!wt,
+    imageProvider,
     // Expose bearer token so the client (via extension) can call the Flow API directly
     bearerToken: wt?.token || null,
   });
@@ -258,15 +318,16 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
+  const settings = getSettings(db);
+  const imageProvider = settings.image_provider || 'whisk';
+  const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
   const { recaptchaToken } = req.body;
-  if (!recaptchaToken) {
-    return res.status(400).json({ error: 'recaptchaToken is required. The client must obtain a reCAPTCHA Enterprise token before calling this endpoint.' });
+
+  if (imageProvider === 'flow' && !recaptchaToken) {
+    return res.status(400).json({ error: 'recaptchaToken is required when using Flow provider.' });
   }
 
-  const settings = getSettings(db);
-  const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
-
-  // Build prompt with style prefix/suffix, then sanitize
+  // Build prompt with style prefix/suffix
   let rawPrompt = scene.image_prompt || scene.text;
   let referenceIds = [];
 
@@ -274,12 +335,15 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
-      // Include style reference images that have a flow_media_id
-      const refs = db.prepare('SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL').all(project.style_id);
-      referenceIds = refs.map(r => r.flow_media_id);
+      if (imageProvider === 'flow') {
+        const refs = db.prepare('SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL').all(project.style_id);
+        referenceIds = refs.map(r => r.flow_media_id);
+      }
     }
   }
-  let prompt = sanitizePrompt(rawPrompt);
+
+  // Sanitize prompt for Whisk (has safety filters); Flow's NARWHAL model is more permissive
+  let prompt = imageProvider === 'whisk' ? sanitizePrompt(rawPrompt) : rawPrompt;
 
   // Token rotation
   let imageBuffer = null;
@@ -304,14 +368,19 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
     triedCount++;
     try {
-      const buffer = await generateViaFlow(wt.token, recaptchaToken, prompt, referenceIds, flowProjectId);
+      let buffer;
+      if (imageProvider === 'flow') {
+        buffer = await generateViaFlow(wt.token, recaptchaToken, prompt, referenceIds, flowProjectId);
+      } else {
+        buffer = await generateViaWhisk(wt.token, prompt);
+      }
       if (buffer) {
         markTokenUsed(db, wt.id);
         imageBuffer = buffer;
-        source = `flow:${wt.label}`;
+        source = `${imageProvider}:${wt.label}`;
         break;
       }
-      markTokenRateLimited(db, wt.id, 'Empty response from Flow');
+      markTokenRateLimited(db, wt.id, `Empty response from ${imageProvider}`);
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
