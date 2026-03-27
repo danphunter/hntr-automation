@@ -155,12 +155,10 @@ async function generateViaWhisk(bearerToken, prompt) {
 }
 
 // ── Flow API (Google AI Sandbox) ──────────────────────────────────────────────
-// The client generates a reCAPTCHA Enterprise token from the browser, sends it
-// to our server, and the server includes it in the Flow API request.
-// This works because the reCAPTCHA token is valid regardless of which machine
-// sends it to the API — it's tied to the site key, not the HTTP origin.
-// The server sets origin: https://labs.google in headers (Node.js is not
-// subject to browser CORS restrictions when making outbound requests).
+// The extension obtains a reCAPTCHA Enterprise token from the labs.google tab,
+// makes the Flow API call there (satisfying CORS), and returns the fifeUrl.
+// The server-side route below (/image/:sceneId) is an alternate path that
+// accepts a pre-obtained recaptchaToken and calls the Flow API server-side.
 
 async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds, flowProjectId) {
   const fetch = (await import('node-fetch')).default;

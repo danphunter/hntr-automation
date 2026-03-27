@@ -6,8 +6,12 @@ const fs = require('fs');
 // Auto-detect Railway persistent volume at /data.
 // DATABASE_PATH env var overrides (set this in Railway dashboard if needed).
 const _dataExists = fs.existsSync('/data');
+const _dataIsDir = _dataExists ? fs.statSync('/data').isDirectory() : false;
+console.log(`[DB] /data exists: ${_dataExists}, isDirectory: ${_dataIsDir}`);
+console.log(`[DB] DATABASE_PATH env: ${process.env.DATABASE_PATH || '(not set)'}`);
+console.log(`[DB] UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)'}`);
 const DB_PATH = process.env.DATABASE_PATH
-  || (_dataExists ? '/data/hntr-automation.db' : path.join(__dirname, '..', 'hntr-automation.db'));
+  || (_dataExists && _dataIsDir ? '/data/hntr-automation.db' : path.join(__dirname, '..', 'hntr-automation.db'));
 let db;
 
 function getDb() {
@@ -181,7 +185,6 @@ function initDb() {
   }
 
   console.log(`✅ Database ready at ${DB_PATH}`);
-  console.log(`   /data exists: ${_dataExists} | DATABASE_PATH env: ${process.env.DATABASE_PATH || '(not set)'}`);
 }
 
 module.exports = { getDb, initDb };

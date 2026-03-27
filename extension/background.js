@@ -8,6 +8,8 @@ console.log('[HNTR bg] service worker loaded');
 
 let flowTabId = null;
 
+console.log('[HNTR] Background service worker started');
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   console.log('[HNTR bg] onMessage fired, action:', msg?.action, 'from tab:', sender?.tab?.id);
   if (msg.action === 'generateImage') {

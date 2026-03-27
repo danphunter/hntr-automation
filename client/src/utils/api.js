@@ -77,8 +77,6 @@ export const api = {
   updateWhiskToken: (id, data) => request('PUT', `/generate/whisk-tokens/${id}`, data),
   deleteWhiskToken: (id) => request('DELETE', `/generate/whisk-tokens/${id}`),
   resetWhiskToken: (id) => request('POST', `/generate/whisk-tokens/${id}/reset`),
-  uploadFlowReference: (refId) => request('POST', '/generate/upload-reference', { refId }),
-
   // Render
   startRender: (projectId, usePlaceholders = false) =>
     request('POST', `/render/${projectId}`, { usePlaceholders }),
