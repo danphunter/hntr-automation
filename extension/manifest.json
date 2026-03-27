@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "HNTR Flow Bridge",
-  "version": "1.3.0",
-  "description": "Enables image generation in HNTR Automation by running the full Flow API call (reCAPTCHA + batchGenerateImages) from the labs.google tab",
+  "version": "1.4.0",
+  "description": "Enables image generation in HNTR Automation by automating the Flow API call from a dedicated labs.google/flow tab (reCAPTCHA best-effort + batchGenerateImages)",
   "permissions": ["scripting", "tabs"],
   "host_permissions": [
     "https://labs.google/*",
