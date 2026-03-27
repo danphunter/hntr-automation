@@ -49,12 +49,12 @@ export default function WhiskTokenBanner() {
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div>
               <p className={`font-semibold text-sm ${allExpired ? 'text-red-300' : 'text-yellow-300'}`}>
-                {allExpired ? 'All Whisk tokens expired — image gen down' : `${expiredTokens.length} Whisk token${expiredTokens.length > 1 ? 's' : ''} expired`}
+                {allExpired ? 'All Flow tokens expired — image gen down' : `${expiredTokens.length} Flow token${expiredTokens.length > 1 ? 's' : ''} expired`}
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
                 {isAdmin
-                  ? 'Paste fresh tokens below. Grab them from your Whisk account → DevTools → Network → Authorization header.'
-                  : 'Ask Dan or your token manager to refresh the Whisk tokens.'}
+                  ? 'Paste fresh tokens below. Grab them from labs.google/flow → DevTools → Network → Authorization header.'
+                  : 'Ask Dan or your token manager to refresh the Flow tokens.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -80,7 +80,7 @@ export default function WhiskTokenBanner() {
                   <div className="flex-shrink-0 w-24 text-xs text-gray-400 font-medium truncate" title={t.label}>{t.label}</div>
                   <input
                     className="input text-xs font-mono flex-1"
-                    placeholder="ya29.xxx — paste fresh token"
+                    placeholder="ya29.xxx — paste fresh Flow token"
                     value={updates[t.id] || ''}
                     onChange={e => setUpdates(u => ({ ...u, [t.id]: e.target.value }))}
                   />

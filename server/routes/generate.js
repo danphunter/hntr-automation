@@ -10,16 +10,18 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
+const FLOW_PROJECT_ID_DEFAULT = '0b18c780-3509-4d6e-84c6-dc4528e2b92b';
+
 function getSettings(db) {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// ── Whisk prompt sanitization ────────────────────────────────────────────────
+// ── Prompt sanitization ───────────────────────────────────────────────────────
 
 // Google Imagen's safety filter rejects prompts with violence/weapons/death references.
-// Replace flagged words with safe visual alternatives before sending to Whisk.
-const WHISK_WORD_REPLACEMENTS = {
+// Replace flagged words with safe visual alternatives before sending to Flow.
+const WORD_REPLACEMENTS = {
   'blood': 'red mist', 'bloody': 'dramatic', 'gore': 'detail', 'gory': 'intense',
   'dead': 'still', 'death': 'stillness', 'die': 'fade', 'dying': 'fading',
   'kill': 'halt', 'killing': 'halting', 'killer': 'figure', 'killed': 'fallen',
@@ -40,9 +42,9 @@ const WHISK_WORD_REPLACEMENTS = {
   'torture': 'ordeal', 'execution': 'ceremony', 'massacre': 'upheaval',
 };
 
-function sanitizeForWhisk(prompt) {
+function sanitizePrompt(prompt) {
   let sanitized = prompt;
-  for (const [word, replacement] of Object.entries(WHISK_WORD_REPLACEMENTS)) {
+  for (const [word, replacement] of Object.entries(WORD_REPLACEMENTS)) {
     sanitized = sanitized.replace(new RegExp(`\\b${word}\\b`, 'gi'), replacement);
   }
   // Add a safe art framing prefix if prompt doesn't already start with one
@@ -62,9 +64,9 @@ function makeSimpleFallbackPrompt(prompt) {
   return `A digital illustration of ${stripped}, dramatic lighting, cinematic composition`;
 }
 
-// ── Whisk token rotation ─────────────────────────────────────────────────────
+// ── Flow token rotation ───────────────────────────────────────────────────────
 
-function getNextWhiskToken(db) {
+function getNextFlowToken(db) {
   // Auto-reset tokens whose 30-second cooldown has expired
   db.prepare(`
     UPDATE whisk_tokens SET status = 'active', last_error = NULL
@@ -81,13 +83,13 @@ function getNextWhiskToken(db) {
   `).get();
 }
 
-function markWhiskUsed(db, tokenId) {
+function markFlowTokenUsed(db, tokenId) {
   db.prepare(`
     UPDATE whisk_tokens SET usage_count = usage_count + 1, last_used = CURRENT_TIMESTAMP WHERE id = ?
   `).run(tokenId);
 }
 
-function markWhiskRateLimited(db, tokenId, errMsg) {
+function markFlowTokenRateLimited(db, tokenId, errMsg) {
   db.prepare(`
     UPDATE whisk_tokens
     SET status = 'rate_limited',
@@ -97,29 +99,42 @@ function markWhiskRateLimited(db, tokenId, errMsg) {
   `).run(errMsg, tokenId);
 }
 
-// Attempt to generate via Whisk API
-// Whisk uses Google AI / Imagen under the hood. The public API endpoint used
-// by the Whisk web app is authenticated via Google OAuth tokens (Bearer tokens
-// from the user's logged-in session). Token format: "ya29.xxx..."
-async function generateViaWhisk(token, prompt) {
+// ── Google Flow API integration ───────────────────────────────────────────────
+//
+// Flow uses the same Google OAuth tokens (ya29.xxx) as Whisk.
+// Image generation returns a signed GCS URL (fifeUrl) to download the JPEG from.
+// reCAPTCHA token is sent as empty string — the invisible reCAPTCHA in the Flow
+// web app generates it client-side but server-to-server calls work without it.
+async function generateViaFlow(token, prompt, projectId, imageInputs = []) {
   const fetch = (await import('node-fetch')).default;
 
-  const body = {
-    clientContext: {
-      workflowId: uuidv4(),
-      tool: 'BACKBONE',
-      sessionId: `;${Date.now()}`,
+  const clientContext = {
+    recaptchaContext: {
+      token: '',
+      applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB',
     },
-    imageModelSettings: {
-      imageModel: 'IMAGEN_3_5',
-      aspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-    },
-    seed: Math.floor(Math.random() * 1000000),
-    prompt,
-    mediaCategory: 'MEDIA_CATEGORY_BOARD',
+    projectId,
+    tool: 'PINHOLE',
+    sessionId: `;${Date.now()}`,
   };
 
-  const res = await fetch('https://aisandbox-pa.googleapis.com/v1/whisk:generateImage', {
+  const body = {
+    clientContext,
+    mediaGenerationContext: { batchId: uuidv4() },
+    useNewMedia: true,
+    requests: [{
+      clientContext,
+      imageModelName: 'NARWHAL',
+      imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+      structuredPrompt: { parts: [{ text: prompt }] },
+      seed: Math.floor(Math.random() * 1000000),
+      imageInputs,
+    }],
+  };
+
+  const endpoint = `https://aisandbox-pa.googleapis.com/v1/projects/${projectId}/flowMedia:batchGenerateImages`;
+
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'accept': '*/*',
@@ -146,29 +161,34 @@ async function generateViaWhisk(token, prompt) {
 
   if (res.status === 429 || res.status === 403) {
     const text = await res.text();
-    console.log('Whisk rate-limited:', res.status, text.slice(0, 500));
+    console.log('Flow rate-limited:', res.status, text.slice(0, 500));
     throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
   }
 
   if (!res.ok) {
     const text = await res.text();
-    console.log('Whisk error:', res.status, text.slice(0, 500));
-    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION')) {
+    console.log('Flow error:', res.status, text.slice(0, 500));
+    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION') || text.includes('UNSAFE')) {
       throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
     }
-    throw new Error(`WHISK_ERROR:${res.status}:${text.slice(0, 200)}`);
+    throw new Error(`FLOW_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  // Response: { imagePanels: [{ generatedImages: [{ encodedImage: "base64..." }] }] }
-  return data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage || null;
+  console.log('Flow response (first 500):', JSON.stringify(data).slice(0, 500));
+
+  // Response: { media: [{ image: { generatedImage: { fifeUrl: "..." } } }] }
+  return data?.media?.[0]?.image?.generatedImage?.fifeUrl || null;
 }
 
-
-async function saveImageFromBase64(b64) {
+async function saveImageFromUrl(fifeUrl) {
+  const fetch = (await import('node-fetch')).default;
   const filename = `img-${uuidv4()}.jpg`;
   const imgPath = path.join(IMAGES_DIR, filename);
-  fs.writeFileSync(imgPath, Buffer.from(b64, 'base64'));
+  const res = await fetch(fifeUrl);
+  if (!res.ok) throw new Error(`Failed to download image from Flow: ${res.status}`);
+  const buffer = await res.buffer();
+  fs.writeFileSync(imgPath, buffer);
   return { filename, imgPath };
 }
 
@@ -185,26 +205,34 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  // Build prompt with style prefix/suffix, then sanitize for Whisk safety filter
+  // Build prompt with style prefix/suffix, then sanitize for the safety filter
   let rawPrompt = scene.image_prompt || scene.text;
+  let imageInputs = [];
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
+      // Collect any reference images that have been synced to Flow
+      const refs = db.prepare(
+        "SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL AND flow_media_id != ''"
+      ).all(project.style_id);
+      imageInputs = refs.map(r => ({ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: r.flow_media_id }));
     }
   }
-  let prompt = sanitizeForWhisk(rawPrompt);
+  let prompt = sanitizePrompt(rawPrompt);
 
-  // Try Whisk tokens in rotation order (getNextWhiskToken auto-resets expired cooldowns)
-  let imageResult = null;
+  const settings = getSettings(db);
+  const flowProjectId = settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
+
+  // Try Flow tokens in rotation order (getNextFlowToken auto-resets expired cooldowns)
+  let fifeUrl = null;
   let source = 'unknown';
   let triedCount = 0;
   let unsafeContentRetried = false;
 
   while (true) {
-    const wt = getNextWhiskToken(db);
-    if (!wt) {
-      // No active tokens — check if any are cooling down
+    const ft = getNextFlowToken(db);
+    if (!ft) {
       const cooldown = db.prepare(`
         SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs
         FROM whisk_tokens
@@ -212,29 +240,28 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       `).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
       const msg = triedCount === 0
-        ? 'No active Whisk tokens — add a token in Settings'
-        : `All Whisk tokens are rate-limited — add a fresh token in Settings`;
+        ? 'No active Flow tokens — add a token in Settings'
+        : 'All Flow tokens are rate-limited — add a fresh token in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
 
     triedCount++;
     try {
-      const encodedImage = await generateViaWhisk(wt.token, prompt);
-      if (encodedImage) {
-        markWhiskUsed(db, wt.id);
-        imageResult = { type: 'base64', value: encodedImage };
-        source = `whisk:${wt.label}`;
+      fifeUrl = await generateViaFlow(ft.token, prompt, flowProjectId, imageInputs);
+      if (fifeUrl) {
+        markFlowTokenUsed(db, ft.id);
+        source = `flow:${ft.label}`;
         break;
       }
       // null result — mark this token as having an error and try next
-      markWhiskRateLimited(db, wt.id, 'Empty response from Whisk');
+      markFlowTokenRateLimited(db, ft.id, 'Empty response from Flow');
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
-        markWhiskRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Whisk token "${wt.label}" rate limited, rotating...`);
+        markFlowTokenRateLimited(db, ft.id, err.message.slice(12));
+        console.log(`Flow token "${ft.label}" rate limited, rotating...`);
       } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
         // Safety filter triggered — retry once with a stripped-down fallback prompt
-        console.warn(`Whisk safety filter triggered for prompt, retrying with fallback. Token: "${wt.label}"`);
+        console.warn(`Flow safety filter triggered for prompt, retrying with fallback. Token: "${ft.label}"`);
         unsafeContentRetried = true;
         prompt = makeSimpleFallbackPrompt(rawPrompt);
         console.log('Fallback prompt:', prompt);
@@ -242,8 +269,8 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
         continue;
       } else {
         // Non-rate-limit error: mark rate-limited briefly so we skip it this round
-        markWhiskRateLimited(db, wt.id, err.message);
-        console.error(`Whisk token "${wt.label}" error:`, err.message);
+        markFlowTokenRateLimited(db, ft.id, err.message);
+        console.error(`Flow token "${ft.label}" error:`, err.message);
       }
     }
 
@@ -252,7 +279,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     if (triedCount >= totalTokens) break;
   }
 
-  if (!imageResult) {
+  if (!fifeUrl) {
     const cooldown = db.prepare(`
       SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs
       FROM whisk_tokens
@@ -260,13 +287,13 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     `).get();
     const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
     return res.status(429).json({
-      error: 'All Whisk tokens are rate-limited or expired — add a fresh token in Settings',
+      error: 'All Flow tokens are rate-limited or expired — add a fresh token in Settings',
       retry_after: retrySecs,
     });
   }
 
-  // Save image locally (Whisk always returns base64)
-  const { filename, imgPath } = await saveImageFromBase64(imageResult.value);
+  // Download the image from the signed GCS URL and save locally
+  const { filename, imgPath } = await saveImageFromUrl(fifeUrl);
 
   const localUrl = `/api/generate/image-file/${filename}`;
   db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?')
@@ -343,9 +370,10 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   res.json({ scenes: updated, demo: false });
 });
 
-// ── Whisk Token Management ───────────────────────────────────────────────────
+// ── Flow Token Management ─────────────────────────────────────────────────────
+// Tokens are stored in the whisk_tokens table (same schema, just rebranded to Flow tokens).
 
-// GET /api/generate/whisk-tokens (admin only handled in settings route)
+// GET /api/generate/whisk-tokens
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
@@ -395,6 +423,68 @@ router.post('/whisk-tokens/:id/reset', authMiddleware, (req, res) => {
   const db = getDb();
   db.prepare("UPDATE whisk_tokens SET status = 'active', last_error = NULL WHERE id = ?").run(req.params.id);
   res.json({ success: true });
+});
+
+// ── Reference image upload to Flow ───────────────────────────────────────────
+
+// POST /api/generate/upload-reference
+// Uploads a style reference image to Flow and stores the returned media ID.
+// Body: { refId: "<style_reference id>" } — reads the file from disk and uploads it.
+router.post('/upload-reference', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  const { refId } = req.body;
+  if (!refId) return res.status(400).json({ error: 'refId required' });
+
+  const db = getDb();
+  const ref = db.prepare('SELECT * FROM style_references WHERE id = ?').get(refId);
+  if (!ref) return res.status(404).json({ error: 'Reference not found' });
+  if (!fs.existsSync(ref.file_path)) return res.status(404).json({ error: 'Reference file not found on disk' });
+
+  const ft = getNextFlowToken(db);
+  if (!ft) return res.status(429).json({ error: 'No active Flow tokens — add a token in Settings' });
+
+  const settings = getSettings(db);
+  const flowProjectId = settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
+
+  const imageBytes = fs.readFileSync(ref.file_path).toString('base64');
+  const ext = path.extname(ref.filename).toLowerCase();
+  const mimeType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+
+  const fetch = (await import('node-fetch')).default;
+  const uploadRes = await fetch('https://aisandbox-pa.googleapis.com/v1/flow/uploadImage', {
+    method: 'POST',
+    headers: {
+      'accept': '*/*',
+      'authorization': 'Bearer ' + ft.token,
+      'content-type': 'application/json',
+      'origin': 'https://labs.google',
+      'referer': 'https://labs.google/',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+    },
+    body: JSON.stringify({
+      clientContext: { projectId: flowProjectId, tool: 'PINHOLE' },
+      fileName: ref.filename,
+      imageBytes,
+      mimeType,
+      isUserUploaded: true,
+      isHidden: false,
+    }),
+  });
+
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text();
+    console.error('Flow upload error:', uploadRes.status, text.slice(0, 500));
+    return res.status(uploadRes.status).json({ error: `Flow upload failed: ${text.slice(0, 200)}` });
+  }
+
+  const data = await uploadRes.json();
+  const mediaId = data?.media?.name;
+  if (!mediaId) return res.status(500).json({ error: 'No media ID in Flow upload response' });
+
+  // Store the Flow media ID on the style reference record
+  db.prepare("UPDATE style_references SET flow_media_id = ? WHERE id = ?").run(mediaId, refId);
+
+  res.json({ mediaId, refId });
 });
 
 module.exports = router;

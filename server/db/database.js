@@ -146,6 +146,7 @@ function initDb() {
     "ALTER TABLE projects ADD COLUMN transcribe_job_id TEXT",
     "ALTER TABLE projects ADD COLUMN transcribe_status TEXT DEFAULT ''",
     "ALTER TABLE whisk_tokens ADD COLUMN rate_limited_until DATETIME",
+    "ALTER TABLE style_references ADD COLUMN flow_media_id TEXT",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}

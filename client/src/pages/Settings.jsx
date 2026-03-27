@@ -54,7 +54,7 @@ function TokenCooldown({ rateLimitedUntil, onExpired }) {
   return <span className="text-xs text-orange-400">auto-reset in {secs}s</span>;
 }
 
-function WhiskTokensSection() {
+function FlowTokensSection() {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newLabel, setNewLabel] = useState('');
@@ -82,7 +82,7 @@ function WhiskTokensSection() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('Remove this Whisk token?')) return;
+    if (!confirm('Remove this Flow token?')) return;
     await api.deleteWhiskToken(id);
     setTokens(t => t.filter(x => x.id !== id));
   }
@@ -107,10 +107,10 @@ function WhiskTokensSection() {
   }[s] || 'text-gray-500 bg-gray-800');
 
   return (
-    <Section title="Whisk Tokens — Token Rotation Pool">
+    <Section title="Flow Tokens — Token Rotation Pool">
       <p className="text-sm text-gray-500">
-        Whisk tokens are Google OAuth tokens (ya29.xxx) from your Whisk accounts.
-        The app tries each active token in order, rotating when one hits its limit.
+        Flow tokens are Google OAuth tokens (ya29.xxx) captured from your Google Flow session.
+        The app tries each active token in order, rotating when one hits its rate limit.
         Tokens may expire daily — paste fresh ones here when needed.
       </p>
 
@@ -167,7 +167,7 @@ function WhiskTokensSection() {
         <h3 className="text-sm font-medium text-gray-400">Add New Token</h3>
         <div className="grid grid-cols-2 gap-2">
           <input className="input text-sm" placeholder='Label (e.g. "Account 2")' value={newLabel} onChange={e => setNewLabel(e.target.value)} />
-          <input className="input text-sm font-mono" placeholder="ya29.xxx token" value={newToken} onChange={e => setNewToken(e.target.value)} />
+          <input className="input text-sm font-mono" placeholder="ya29.xxx Flow token" value={newToken} onChange={e => setNewToken(e.target.value)} />
         </div>
         <button type="submit" disabled={adding || !newLabel.trim() || !newToken.trim()} className="btn-primary flex items-center gap-2 text-sm">
           {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Token
@@ -243,8 +243,25 @@ export default function Settings() {
         </button>
       </form>
 
-      <div className="mt-6">
-        <WhiskTokensSection />
+      <div className="mt-6 space-y-6">
+        <Section title="Image Generation — Google Flow">
+          <div>
+            <label className="label">Flow Project ID</label>
+            <input
+              type="text"
+              className="input font-mono text-sm"
+              value={values.flow_project_id || ''}
+              onChange={e => onChange('flow_project_id', e.target.value)}
+              placeholder="0b18c780-3509-4d6e-84c6-dc4528e2b92b"
+            />
+          </div>
+          <p className="text-xs text-gray-500">
+            Your Google Flow project ID. Defaults to Dan's project if left blank.
+            Find it in the Flow URL or Network tab when generating an image.
+          </p>
+        </Section>
+
+        <FlowTokensSection />
       </div>
     </div>
   );
