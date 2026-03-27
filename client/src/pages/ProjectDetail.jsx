@@ -9,42 +9,55 @@ import {
   Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
-// Get a reCAPTCHA Enterprise token via the HNTR Flow Bridge Chrome extension.
-// The extension's content script (content.js) runs on this page and bridges
-// custom DOM events to the background worker, which executes reCAPTCHA on labs.google.
-function getRecaptchaToken() {
-  return new Promise((resolve, reject) => {
-    if (!window.__HNTR_EXTENSION_INSTALLED) {
-      reject(new Error(
-        'HNTR Flow Bridge extension is not installed. ' +
-        'Please install it from the extension/ folder to generate images.'
-      ));
-      return;
-    }
+// Detect the HNTR Flow Bridge Chrome extension via a ping/pong CustomEvent.
+// content.js runs in the isolated world and responds to document-level events,
+// which cross the isolated/page world boundary via the shared DOM — no inline
+// scripts needed, fully CSP-safe.
+function checkExtension() {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 1000);
+    document.addEventListener('hntr-pong', () => {
+      clearTimeout(timeout);
+      resolve(true);
+    }, { once: true });
+    document.dispatchEvent(new CustomEvent('hntr-ping'));
+  });
+}
 
+// Get a reCAPTCHA Enterprise token via the HNTR Flow Bridge Chrome extension.
+async function getRecaptchaToken() {
+  const installed = await checkExtension();
+  if (!installed) {
+    throw new Error(
+      'HNTR Flow Bridge extension is not installed. ' +
+      'Please install it from the extension/ folder to generate images.'
+    );
+  }
+
+  return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      window.removeEventListener('hntr-token-response', onToken);
-      window.removeEventListener('hntr-token-error', onError);
+      document.removeEventListener('hntr-token-response', onToken);
+      document.removeEventListener('hntr-token-error', onError);
       reject(new Error('reCAPTCHA token request timed out. Please try again.'));
     }, 30000);
 
     function onToken(e) {
       clearTimeout(timeout);
-      window.removeEventListener('hntr-token-response', onToken);
-      window.removeEventListener('hntr-token-error', onError);
+      document.removeEventListener('hntr-token-response', onToken);
+      document.removeEventListener('hntr-token-error', onError);
       resolve(e.detail.token);
     }
 
     function onError(e) {
       clearTimeout(timeout);
-      window.removeEventListener('hntr-token-response', onToken);
-      window.removeEventListener('hntr-token-error', onError);
+      document.removeEventListener('hntr-token-response', onToken);
+      document.removeEventListener('hntr-token-error', onError);
       reject(new Error(e.detail.error));
     }
 
-    window.addEventListener('hntr-token-response', onToken);
-    window.addEventListener('hntr-token-error', onError);
-    window.dispatchEvent(new CustomEvent('hntr-request-token'));
+    document.addEventListener('hntr-token-response', onToken);
+    document.addEventListener('hntr-token-error', onError);
+    document.dispatchEvent(new CustomEvent('hntr-request-token'));
   });
 }
 

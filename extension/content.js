@@ -2,10 +2,20 @@
 // Runs in the isolated world. Bridges CustomEvents from the React app
 // to the background service worker via chrome.runtime.
 //
-// window.__HNTR_EXTENSION_INSTALLED is set by page-bridge.js (MAIN world)
-// which bypasses any page CSP restrictions on inline scripts.
+// Uses document-level CustomEvents (NOT window) — these cross the isolated
+// world / page world boundary via the shared DOM without any inline scripts,
+// making this approach fully CSP-safe.
 
-window.addEventListener('hntr-request-token', async () => {
+// Signal to the page that the extension is installed and ready
+document.dispatchEvent(new CustomEvent('hntr-extension-ready'));
+
+// Respond to pings so the page can detect the extension at any time
+document.addEventListener('hntr-ping', () => {
+  document.dispatchEvent(new CustomEvent('hntr-pong'));
+});
+
+// Handle token requests
+document.addEventListener('hntr-request-token', async () => {
   // Retry up to 3 times. In MV3, the service worker may need a moment to wake
   // up from idle — "Could not establish connection" is the symptom.
   let lastError = 'Failed to communicate with extension background';
@@ -13,20 +23,19 @@ window.addEventListener('hntr-request-token', async () => {
     if (attempt > 0) await new Promise(r => setTimeout(r, 300 * attempt));
     const result = await sendMessageToBackground({ action: 'getRecaptchaToken' });
     if (result.ok) {
-      window.dispatchEvent(new CustomEvent('hntr-token-response', {
+      document.dispatchEvent(new CustomEvent('hntr-token-response', {
         detail: { token: result.token },
       }));
       return;
     }
     lastError = result.error;
     // Only retry connection-level errors (service worker not yet awake).
-    // For reCAPTCHA or other logic errors, fail immediately.
     const isConnectionError =
       lastError.includes('Could not establish connection') ||
       lastError.includes('Receiving end does not exist');
     if (!isConnectionError) break;
   }
-  window.dispatchEvent(new CustomEvent('hntr-token-error', {
+  document.dispatchEvent(new CustomEvent('hntr-token-error', {
     detail: { error: lastError },
   }));
 });
