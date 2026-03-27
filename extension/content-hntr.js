@@ -21,11 +21,10 @@ document.addEventListener('hntr-generate-image', async (e) => {
   console.log('[HNTR content] hntr-generate-image event received', {
     requestId: e.detail?.requestId,
     hasPrompt: !!e.detail?.prompt,
-    hasToken: !!e.detail?.bearerToken,
     hasProjectId: !!e.detail?.projectId,
   });
 
-  const { prompt, bearerToken, projectId, seed, requestId } = e.detail;
+  const { prompt, projectId, seed, requestId } = e.detail;
 
   // Retry up to 3 times. In MV3, the service worker may need a moment to wake
   // up from idle — "Could not establish connection" is the symptom.
@@ -41,7 +40,6 @@ document.addEventListener('hntr-generate-image', async (e) => {
       result = await sendMessageToBackground({
         action: 'generateImage',
         prompt,
-        bearerToken,
         projectId,
         seed,
       });

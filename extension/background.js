@@ -29,13 +29,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-async function handleGenerate({ prompt, bearerToken, projectId, seed }) {
+async function handleGenerate({ prompt, projectId, seed }) {
   const tabId = await ensureFlowTab();
 
   const result = await sendTabMessage(tabId, {
     action: 'executeFlow',
     prompt,
-    bearerToken,
     projectId,
     seed,
   });

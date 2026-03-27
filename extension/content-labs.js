@@ -34,7 +34,7 @@ window.addEventListener('hntr-flow-result', (e) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action !== 'executeFlow') return false;
 
-  const { prompt, bearerToken, projectId, seed } = msg;
+  const { prompt, projectId, seed } = msg;
   const correlationId = `${Date.now()}-${Math.random()}`;
 
   // Wait up to 5 s for the injected script to be ready, then fire the request.
@@ -52,7 +52,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
 
         window.dispatchEvent(new CustomEvent('hntr-flow-execute', {
-          detail: { correlationId, prompt, bearerToken, projectId, seed },
+          detail: { correlationId, prompt, projectId, seed },
         }));
       });
     })

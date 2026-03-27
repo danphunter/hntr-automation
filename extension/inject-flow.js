@@ -25,7 +25,7 @@ function waitForRecaptcha(maxWait) {
 }
 
 window.addEventListener('hntr-flow-execute', async (e) => {
-  const { correlationId, prompt, bearerToken, projectId, seed } = e.detail || {};
+  const { correlationId, prompt, projectId, seed } = e.detail || {};
 
   function respond(detail) {
     window.dispatchEvent(new CustomEvent('hntr-flow-result', {
@@ -84,8 +84,8 @@ window.addEventListener('hntr-flow-execute', async (e) => {
       `https://aisandbox-pa.googleapis.com/v1/projects/${projectId}/flowMedia:batchGenerateImages`,
       {
         method: 'POST',
+        credentials: 'include',
         headers: {
-          'authorization': `Bearer ${bearerToken}`,
           'content-type': 'text/plain;charset=UTF-8',
         },
         body: JSON.stringify(body),

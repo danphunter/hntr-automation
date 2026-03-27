@@ -27,7 +27,7 @@ function checkExtension() {
 // Generate an image via the HNTR Flow Bridge Chrome extension.
 // The extension runs the full operation (reCAPTCHA + Flow API call) from the
 // labs.google tab, then returns the fifeUrl of the generated image.
-async function generateImageViaExtension(prompt, bearerToken, projectId, seed) {
+async function generateImageViaExtension(prompt, projectId, seed) {
   const installed = await checkExtension();
   if (!installed) {
     throw new Error(
@@ -63,7 +63,7 @@ async function generateImageViaExtension(prompt, bearerToken, projectId, seed) {
     document.addEventListener('hntr-generate-result', onResult);
     document.addEventListener('hntr-generate-error', onError);
     document.dispatchEvent(new CustomEvent('hntr-generate-image', {
-      detail: { prompt, bearerToken, projectId, seed, requestId },
+      detail: { prompt, projectId, seed, requestId },
     }));
   });
 }
@@ -412,13 +412,10 @@ export default function ProjectDetail() {
   // depending on the image_provider setting returned by flow-config.
   async function generateOneImage(scene, flowConfig) {
     if (flowConfig.imageProvider === 'flow') {
-      // Flow path: extension does full generation, returns fifeUrl
-      if (!flowConfig.bearerToken) {
-        throw new Error('No active bearer token. Please add a token in Settings.');
-      }
+      // Flow path: extension does full generation using browser cookies for auth
       const prompt = scene.image_prompt || scene.text;
       const seed = Math.floor(Math.random() * 1000000);
-      const fifeUrl = await generateImageViaExtension(prompt, flowConfig.bearerToken, flowConfig.flowProjectId, seed);
+      const fifeUrl = await generateImageViaExtension(prompt, flowConfig.flowProjectId, seed);
       return api.saveImage(scene.id, fifeUrl);
     } else {
       // Whisk path: server handles generation directly, no extension needed
