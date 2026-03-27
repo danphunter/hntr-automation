@@ -8,6 +8,8 @@
 // empty token (the Flow API sometimes accepts this from a valid browser
 // session).  The fetch always originates from labs.google, satisfying CORS.
 
+console.log('[HNTR bg] service worker loaded');
+
 const FLOW_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 
 // Persisted across service-worker invocations via the module-level variable.
@@ -16,10 +18,18 @@ const FLOW_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 let flowTabId = null;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  console.log('[HNTR bg] onMessage fired, action:', msg?.action, 'from tab:', sender?.tab?.id);
   if (msg.action === 'generateImage') {
+    console.log('[HNTR bg] handling generateImage request, prompt length:', msg.prompt?.length);
     handleGenerate(msg)
-      .then(result => sendResponse({ success: true, fifeUrl: result.fifeUrl }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
+      .then(result => {
+        console.log('[HNTR bg] generateImage succeeded, fifeUrl:', result.fifeUrl?.slice(0, 60));
+        sendResponse({ success: true, fifeUrl: result.fifeUrl });
+      })
+      .catch(err => {
+        console.error('[HNTR bg] generateImage failed:', err.message);
+        sendResponse({ success: false, error: err.message });
+      });
     return true; // keep message channel open for async response
   }
 });
