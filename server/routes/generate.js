@@ -368,9 +368,9 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     try {
       let buffer;
       if (imageProvider === 'flow') {
-        buffer = await generateViaFlow(wt.token, recaptchaToken, prompt, referenceIds, flowProjectId);
+        buffer = await generateViaFlow(wt.token.trim(), recaptchaToken, prompt, referenceIds, flowProjectId);
       } else {
-        buffer = await generateViaWhisk(wt.token, prompt);
+        buffer = await generateViaWhisk(wt.token.trim(), prompt);
       }
       if (buffer) {
         markTokenUsed(db, wt.id);
