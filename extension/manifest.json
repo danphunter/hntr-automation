@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "HNTR Flow Bridge",
-  "version": "1.4.0",
-  "description": "Enables image generation in HNTR Automation by automating the Flow API call from a dedicated labs.google/flow tab (reCAPTCHA best-effort + batchGenerateImages)",
+  "version": "1.5.0",
+  "description": "Enables image generation in HNTR Automation via GenAIPro-style reCAPTCHA injection pattern on labs.google",
   "permissions": ["scripting", "tabs"],
   "host_permissions": [
     "https://labs.google/*",
@@ -18,8 +18,17 @@
         "https://hntr-automation-production.up.railway.app/*",
         "http://localhost:*/*"
       ],
-      "js": ["content.js"],
+      "js": ["content-hntr.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://labs.google/*"],
+      "js": ["content-labs.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "web_accessible_resources": [{
+    "resources": ["inject-flow.js"],
+    "matches": ["https://labs.google/*"]
+  }]
 }
