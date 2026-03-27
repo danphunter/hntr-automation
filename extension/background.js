@@ -15,6 +15,8 @@ const FLOW_SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
 // third-party extension's tabs.
 let flowTabId = null;
 
+console.log('[HNTR] Background service worker started');
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'generateImage') {
     handleGenerate(msg)

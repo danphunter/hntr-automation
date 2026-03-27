@@ -10,8 +10,12 @@ const PORT = process.env.PORT || 3001;
 
 // Use UPLOADS_PATH env var if set, auto-detect /data volume, else local server/uploads.
 const _dataExists = fs.existsSync('/data');
+const _dataIsDir = _dataExists ? fs.statSync('/data').isDirectory() : false;
+console.log(`[Server] /data exists: ${_dataExists}, isDirectory: ${_dataIsDir}`);
+console.log(`[Server] DATABASE_PATH env: ${process.env.DATABASE_PATH || '(not set)'}`);
+console.log(`[Server] UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)'}`);
 const UPLOADS_BASE = process.env.UPLOADS_PATH
-  || (_dataExists ? '/data/uploads' : path.join(__dirname, 'uploads'));
+  || (_dataExists && _dataIsDir ? '/data/uploads' : path.join(__dirname, 'uploads'));
 process.env.UPLOADS_PATH = UPLOADS_BASE; // expose to route files
 for (const sub of ['', 'images', 'references']) {
   const dir = path.join(UPLOADS_BASE, sub);
