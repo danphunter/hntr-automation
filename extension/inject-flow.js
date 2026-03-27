@@ -33,8 +33,8 @@ window.addEventListener('hntr-flow-execute', async (e) => {
     }));
   }
 
-  // ── reCAPTCHA (best-effort, 30 s wait + 10 s execute timeout) ────────────
-  let recaptchaToken = '';
+  // ── reCAPTCHA (required — Flow API returns 403 without a valid token) ────
+  let recaptchaToken;
   try {
     await Promise.race([
       waitForRecaptcha(30000),
@@ -46,7 +46,9 @@ window.addEventListener('hntr-flow-execute', async (e) => {
     ]);
     console.log('[HNTR] reCAPTCHA token obtained');
   } catch (err) {
-    console.log('[HNTR] reCAPTCHA failed, continuing without token:', err.message);
+    console.error('[HNTR] reCAPTCHA failed:', err.message);
+    respond({ error: `reCAPTCHA failed: ${err.message}. Make sure labs.google/fx/tools/flow is open and fully loaded.` });
+    return;
   }
 
   // ── Flow API call ─────────────────────────────────────────────────────────
