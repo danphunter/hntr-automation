@@ -3,15 +3,19 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
 
-// Auto-detect Railway persistent volume at /data.
+// Auto-detect Railway persistent volume at /data (or RAILWAY_VOLUME_MOUNT_PATH).
 // DATABASE_PATH env var overrides (set this in Railway dashboard if needed).
-const _dataExists = fs.existsSync('/data');
-const _dataIsDir = _dataExists ? fs.statSync('/data').isDirectory() : false;
-console.log(`[DB] /data exists: ${_dataExists}, isDirectory: ${_dataIsDir}`);
+let _dataPath = '/data';
+if (!fs.existsSync(_dataPath) && process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+  _dataPath = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+}
+const _dataExists = fs.existsSync(_dataPath);
+const _dataIsDir = _dataExists ? fs.statSync(_dataPath).isDirectory() : false;
+console.log(`[DB] ${_dataPath} exists: ${_dataExists}, isDirectory: ${_dataIsDir}`);
 console.log(`[DB] DATABASE_PATH env: ${process.env.DATABASE_PATH || '(not set)'}`);
 console.log(`[DB] UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)'}`);
 const DB_PATH = process.env.DATABASE_PATH
-  || (_dataExists && _dataIsDir ? '/data/hntr-automation.db' : path.join(__dirname, '..', 'hntr-automation.db'));
+  || (_dataExists && _dataIsDir ? path.join(_dataPath, 'hntr-automation.db') : path.join(__dirname, '..', 'hntr-automation.db'));
 let db;
 
 function getDb() {

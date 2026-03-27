@@ -168,7 +168,7 @@ router.post('/:id/transcribe', authMiddleware, async (req, res) => {
 
   const settings = db.prepare('SELECT key, value FROM settings').all();
   const settingsMap = Object.fromEntries(settings.map(r => [r.key, r.value]));
-  const apiKey = settingsMap.assemblyai_api_key;
+  const apiKey = settingsMap.assemblyai_api_key?.trim();
   if (!apiKey) return res.status(400).json({ error: 'AssemblyAI API key not configured in Settings' });
 
   try {
@@ -229,7 +229,7 @@ router.get('/:id/transcribe-status', authMiddleware, async (req, res) => {
   }
 
   const settings = db.prepare('SELECT key, value FROM settings').all();
-  const apiKey = Object.fromEntries(settings.map(r => [r.key, r.value])).assemblyai_api_key;
+  const apiKey = Object.fromEntries(settings.map(r => [r.key, r.value])).assemblyai_api_key?.trim();
   if (!apiKey) return res.status(400).json({ error: 'AssemblyAI API key not configured' });
 
   try {

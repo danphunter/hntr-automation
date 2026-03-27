@@ -6,19 +6,11 @@ const router = express.Router();
 
 const PUBLIC_KEYS = ['assemblyai_api_key', 'openai_api_key', 'video_width', 'video_height', 'video_fps', 'flow_project_id', 'image_provider'];
 
-// GET /api/settings — admin only (returns masked values)
+// GET /api/settings — admin only (returns full values; input type=password handles visual masking)
 router.get('/', authMiddleware, adminOnly, (req, res) => {
   const db = getDb();
   const rows = db.prepare('SELECT key, value FROM settings').all();
-  const settings = {};
-  for (const row of rows) {
-    // Mask API keys in response
-    if (row.key.includes('api_key') && row.value) {
-      settings[row.key] = row.value.slice(0, 8) + '••••••••';
-    } else {
-      settings[row.key] = row.value;
-    }
-  }
+  const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
   res.json(settings);
 });
 
@@ -29,7 +21,7 @@ router.put('/', authMiddleware, adminOnly, (req, res) => {
   const upsertMany = db.transaction((updates) => {
     for (const [key, value] of Object.entries(updates)) {
       if (PUBLIC_KEYS.includes(key)) {
-        upsert.run(key, value);
+        upsert.run(key, typeof value === 'string' ? value.trim() : value);
       }
     }
   });
