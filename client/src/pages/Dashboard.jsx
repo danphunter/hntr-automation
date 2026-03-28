@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Video, Clock, CheckCircle2, Loader2, AlertCircle,
-  Film, Download, Image, FolderPlus,
+  Film, Download, Image, FolderPlus, Trash2,
 } from 'lucide-react';
 
 function formatDuration(startIso, endIso) {
@@ -51,6 +51,17 @@ export default function Dashboard() {
   }, []);
 
   const completed = projects.filter(p => p.status === 'complete').length;
+
+  async function handleDelete(e, project) {
+    e.preventDefault();
+    if (!window.confirm(`Delete "${project.title}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteProject(project.id);
+      setProjects(prev => prev.filter(p => p.id !== project.id));
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+    }
+  }
 
   return (
     <div className="p-10 max-w-7xl mx-auto">
@@ -119,6 +130,13 @@ export default function Dashboard() {
                     <Download size={15} /> Download
                   </a>
                 )}
+                <button
+                  onClick={e => handleDelete(e, p)}
+                  className="flex-shrink-0 p-2 text-gray-600 hover:text-red-400 hover:bg-red-900/20 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                  title="Delete project"
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
             );
           })}
