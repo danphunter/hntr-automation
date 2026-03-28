@@ -11,7 +11,7 @@ const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
 const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
-// Default Flow project ID captured from labs.google — can be overridden via settings/env
+// Default Flow project ID captured from labs.google â can be overridden via settings/env
 const FLOW_PROJECT_ID_DEFAULT = '0b18c780-3509-4d6e-84c6-dc4528e2b92b';
 
 function getSettings(db) {
@@ -19,7 +19,7 @@ function getSettings(db) {
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// ── Prompt sanitization ───────────────────────────────────────────────────────
+// ââ Prompt sanitization âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 const WHISK_WORD_REPLACEMENTS = {
   'blood': 'red mist', 'bloody': 'dramatic', 'gore': 'detail', 'gory': 'intense',
@@ -62,7 +62,7 @@ function makeSimpleFallbackPrompt(prompt) {
   return `A digital illustration of ${stripped}, dramatic lighting, cinematic composition`;
 }
 
-// ── Token rotation ────────────────────────────────────────────────────────────
+// ââ Token rotation ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function getNextToken(db) {
   db.prepare(`
@@ -96,7 +96,7 @@ function markTokenRateLimited(db, tokenId, errMsg) {
   `).run(errMsg, tokenId);
 }
 
-// ── Whisk API ────────────────────────────────────────────────────────────────
+// ââ Whisk API ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async function generateViaWhisk(bearerToken, prompt) {
   const fetch = (await import('node-fetch')).default;
@@ -154,7 +154,7 @@ async function generateViaWhisk(bearerToken, prompt) {
   return Buffer.from(encodedImage, 'base64');
 }
 
-// ── Flow API (Google AI Sandbox) ──────────────────────────────────────────────
+// ââ Flow API (Google AI Sandbox) ââââââââââââââââââââââââââââââââââââââââââââââ
 // The extension obtains a reCAPTCHA Enterprise token from the labs.google tab,
 // makes the Flow API call there (satisfying CORS), and returns the fifeUrl.
 // The server-side route below (/image/:sceneId) is an alternate path that
@@ -164,10 +164,7 @@ async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds
   const fetch = (await import('node-fetch')).default;
 
   const clientContext = {
-    recaptchaContext: {
-      token: recaptchaToken,
-      applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB',
-    },
+    ...(recaptchaToken ? { recaptchaContext: { token: recaptchaToken, applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB' } } : {}),
     projectId: flowProjectId,
     tool: 'PINHOLE',
     sessionId: `;${Date.now()}`,
@@ -254,9 +251,9 @@ async function saveImageFromBuffer(buffer) {
   return { filename, imgPath };
 }
 
-// ── Routes ───────────────────────────────────────────────────────────────────
+// ââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-// GET /api/generate/flow-config — returns image generation config for the client
+// GET /api/generate/flow-config â returns image generation config for the client
 router.get('/flow-config', authMiddleware, (req, res) => {
   const db = getDb();
   const settings = getSettings(db);
@@ -273,7 +270,7 @@ router.get('/flow-config', authMiddleware, (req, res) => {
   });
 });
 
-// POST /api/generate/save-image — download a fifeUrl and save it for a scene
+// POST /api/generate/save-image â download a fifeUrl and save it for a scene
 router.post('/save-image', authMiddleware, async (req, res) => {
   const { sceneId, fifeUrl } = req.body;
   if (!sceneId || !fifeUrl) return res.status(400).json({ error: 'sceneId and fifeUrl required' });
@@ -321,9 +318,6 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
   const { recaptchaToken } = req.body;
 
-  if (imageProvider === 'flow' && !recaptchaToken) {
-    return res.status(400).json({ error: 'recaptchaToken is required when using Flow provider.' });
-  }
 
   // Build prompt with style prefix/suffix
   let rawPrompt = scene.image_prompt || scene.text;
@@ -359,8 +353,8 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       `).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
       const msg = triedCount === 0
-        ? 'No active tokens — add a token in Settings'
-        : 'All tokens are rate-limited — add a fresh token in Settings';
+        ? 'No active tokens â add a token in Settings'
+        : 'All tokens are rate-limited â add a fresh token in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
 
@@ -408,7 +402,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     `).get();
     const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
     return res.status(429).json({
-      error: 'All tokens are rate-limited or expired — add a fresh token in Settings',
+      error: 'All tokens are rate-limited or expired â add a fresh token in Settings',
       retry_after: retrySecs,
     });
   }
@@ -429,7 +423,7 @@ router.get('/image-file/:filename', (req, res) => {
   res.sendFile(imgPath);
 });
 
-// POST /api/generate/prompts/:projectId — auto-generate all image prompts
+// POST /api/generate/prompts/:projectId â auto-generate all image prompts
 router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const db = getDb();
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.projectId);
@@ -486,7 +480,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   res.json({ scenes: updated, demo: false });
 });
 
-// ── Token Management ──────────────────────────────────────────────────────────
+// ââ Token Management ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
