@@ -189,8 +189,8 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
           </div>
           <button
             onClick={() => onRegenerate(scene.id)}
-            disabled={isGenerating}
-            className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+            disabled={isGenerating || !scene.image_url}
+            className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
             Regenerate
@@ -1004,8 +1004,8 @@ export default function ProjectDetail() {
               <p className="text-sm text-gray-300 leading-relaxed flex-1">{lightboxScene.text}</p>
               <button
                 onClick={() => handleRegenerateImage(lightboxScene.id)}
-                disabled={generatingId === lightboxScene.id}
-                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
+                disabled={generatingId === lightboxScene.id || !lightboxScene.image_url}
+                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {generatingId === lightboxScene.id
                   ? <Loader2 size={14} className="animate-spin" />
