@@ -444,14 +444,26 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 
   if (!apiKey) {
     const updated = scenes.map(scene => {
-      const visualBase = scene.text.slice(0, 150).replace(/["""'']/g, '');
-      const stylePrefix = styleContext ? `${styleContext}. ` : '';
-      const prompt = `${stylePrefix}A cinematic scene depicting: ${visualBase}. Dramatic lighting, high quality, film still, wide angle shot.`;
+      const stylePrefix = styleContext ? `${styleContext}, ` : '';
+      const prompt = `${stylePrefix}cinematic scene, dramatic lighting, high detail, photorealistic, 16:9 widescreen, no text, no words`;
       db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
       return { id: scene.id, image_prompt: prompt };
     });
     return res.json({ scenes: updated, demo: true });
   }
+
+  const systemPrompt = [
+    'You are an expert at writing image generation prompts for AI art tools like Stable Diffusion and Whisk.',
+    styleContext ? `Style context: ${styleContext}` : '',
+    '',
+    'Your job is to translate spoken narration into a vivid VISUAL scene description.',
+    'Rules:',
+    '- Describe what would be SEEN in the image, never what is being SAID',
+    '- Never include any text, words, letters, captions, subtitles, or narration in the prompt',
+    '- Be specific: subjects, environment, lighting, mood, camera angle, time of day',
+    '- Keep under 100 words',
+    '- Return ONLY the image prompt, no explanation or preamble',
+  ].filter(Boolean).join('\n');
 
   const fetch = (await import('node-fetch')).default;
   const updated = [];
@@ -463,18 +475,18 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: `You write concise, vivid image prompts for AI image generation. ${styleContext} Each prompt must be visually specific, cinematic, and under 150 words. Return only the prompt.` },
-            { role: 'user', content: `Write an image prompt for this scene: "${scene.text}"` },
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `Narration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.` },
           ],
-          max_tokens: 200,
+          max_tokens: 150,
         }),
       });
       const data = await resp.json();
-      const prompt = data.choices?.[0]?.message?.content?.trim() || scene.text;
+      const prompt = data.choices?.[0]?.message?.content?.trim() || '';
       db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
       updated.push({ id: scene.id, image_prompt: prompt });
     } catch {
-      updated.push({ id: scene.id, image_prompt: scene.image_prompt || scene.text });
+      updated.push({ id: scene.id, image_prompt: scene.image_prompt || '' });
     }
   }
   res.json({ scenes: updated, demo: false });

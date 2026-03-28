@@ -11,7 +11,7 @@ import {
 
 // Detect the HNTR Flow Bridge Chrome extension via a ping/pong CustomEvent.
 // content.js runs in the isolated world and responds to document-level events,
-// which cross the isolated/page world boundary via the shared DOM â no inline
+// which cross the isolated/page world boundary via the shared DOM - no inline
 // scripts needed, fully CSP-safe.
 function checkExtension() {
   return new Promise((resolve) => {
@@ -98,7 +98,7 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <span className="text-xs font-mono text-gray-500">
-              {formatTime(scene.start_time)} â {formatTime(scene.end_time)}
+              {formatTime(scene.start_time)} → {formatTime(scene.end_time)}
             </span>
             <span className="text-xs text-gray-600 bg-gray-800 rounded px-1.5 py-0.5">
               {scene.duration}s
@@ -159,7 +159,7 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
           {index + 1}
         </div>
         <span className="text-xs font-mono text-gray-500 flex-1 truncate">
-          {formatTime(scene.start_time)} â {formatTime(scene.end_time)} Â· {scene.duration}s
+          {formatTime(scene.start_time)} → {formatTime(scene.end_time)} · {scene.duration}s
         </span>
         {isGenerating && <Loader2 size={13} className="animate-spin text-indigo-400 flex-shrink-0" />}
         {!isGenerating && scene.status === 'generated' && <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />}
@@ -267,7 +267,7 @@ export default function ProjectDetail() {
         setProject(proj);
         setScenes(scns);
         setEditTitle(proj.title || '');
-        // style_id may be null for older projects â fall back to matching by style name
+        // style_id may be null for older projects - fall back to matching by style name
         const styleId = proj.style_id
           ? String(proj.style_id)
           : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
@@ -374,7 +374,7 @@ export default function ProjectDetail() {
               clearInterval(interval);
               reject(new Error(result.message || 'Transcription failed'));
             }
-            // else still processing â keep polling
+            // else still processing - keep polling
           } catch (e) {
             clearInterval(interval);
             reject(e);
@@ -540,7 +540,7 @@ export default function ProjectDetail() {
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-white truncate">{project.title}</h1>
           <div className="text-xs text-gray-500 mt-0.5">
-            {scenes.length} scenes Â· {formatTime(totalDuration)} Â·{' '}
+            {scenes.length} scenes · {formatTime(totalDuration)} ·{' '}
             <span className={`capitalize ${
               project.status === 'complete'  ? 'text-green-400' :
               project.status === 'rendering' ? 'text-yellow-400' :
@@ -592,7 +592,7 @@ export default function ProjectDetail() {
       )}
 
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 1 â Project Details                                            */}
+      {/* STEP 1 - Project Details                                            */}
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
       {step === 1 && (
         <div className="card p-6 space-y-5">
@@ -639,7 +639,7 @@ export default function ProjectDetail() {
       )}
 
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 2 â Upload Audio                                               */}
+      {/* STEP 2 - Upload Audio                                               */}
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
       {step === 2 && (
         <div className="card p-6 space-y-4">
@@ -691,7 +691,7 @@ export default function ProjectDetail() {
               className="btn-primary flex-1 flex items-center justify-center gap-2"
             >
               {uploadingAudio
-                ? <><Loader2 size={15} className="animate-spin" /> Uploadingâ¦</>
+                ? <><Loader2 size={15} className="animate-spin" /> Uploading...</>
                 : <><Upload size={15} /> Upload & Continue</>}
             </button>
           </div>
@@ -708,7 +708,7 @@ export default function ProjectDetail() {
       )}
 
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 3 â Transcription                                              */}
+      {/* STEP 3 - Transcription                                              */}
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
       {step === 3 && (
         <div className="space-y-4">
@@ -720,9 +720,9 @@ export default function ProjectDetail() {
           {transcribing && (
             <div className="card p-10 text-center">
               <Loader2 size={36} className="animate-spin text-indigo-500 mx-auto mb-4" />
-              <p className="text-gray-200 font-medium">Transcribing audioâ¦</p>
+              <p className="text-gray-200 font-medium">Transcribing audio...</p>
               <p className="text-sm text-gray-500 mt-1.5">
-                AssemblyAI is processing your voiceover. This usually takes 30â90 seconds.
+                AssemblyAI is processing your voiceover. This usually takes 30-90 seconds.
               </p>
             </div>
           )}
@@ -781,7 +781,7 @@ export default function ProjectDetail() {
       )}
 
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 4 â Image Generation                                           */}
+      {/* STEP 4 - Image Generation                                           */}
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
       {step === 4 && (
         <div className="space-y-4">
@@ -799,8 +799,8 @@ export default function ProjectDetail() {
               <div className="flex-1">
                 <div className="text-sm text-gray-300 font-medium">
                   {generatingPrompts
-                    ? 'Generating image promptsâ¦'
-                    : `Generating image ${genProgress.current} of ${genProgress.total}â¦`}
+                    ? 'Generating image prompts...'
+                    : `Generating image ${genProgress.current} of ${genProgress.total}...`}
                 </div>
                 {!generatingPrompts && genProgress.total > 0 && (
                   <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5">
@@ -853,7 +853,7 @@ export default function ProjectDetail() {
       )}
 
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 5 â Render & Download                                          */}
+      {/* STEP 5 - Render & Download                                          */}
       {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
       {step === 5 && (
         <div className="space-y-4">
@@ -957,7 +957,7 @@ export default function ProjectDetail() {
                 className="btn-primary flex-1 flex items-center justify-center gap-2"
               >
                 {renderProgress?.status === 'processing'
-                  ? <><Loader2 size={15} className="animate-spin" /> Renderingâ¦</>
+                  ? <><Loader2 size={15} className="animate-spin" /> Rendering...</>
                   : <><Play size={15} /> Start Render</>}
               </button>
             )}
@@ -965,10 +965,10 @@ export default function ProjectDetail() {
 
           <div className="card p-4 bg-gray-900/30 text-xs text-gray-500 space-y-1">
             <p className="font-medium text-gray-400">What gets exported:</p>
-            <p>â¢ Each scene image displayed for its duration</p>
-            <p>â¢ Static images, no zoom effect</p>
-            <p>â¢ Voiceover audio overlaid and synced</p>
-            <p>â¢ 1920Ã1080 MP4, H.264, ready for CapCut</p>
+            <p>• Each scene image displayed for its duration</p>
+            <p>• Static images, no zoom effect</p>
+            <p>• Voiceover audio overlaid and synced</p>
+            <p>• 1920x1080 MP4, H.264, ready for CapCut</p>
           </div>
         </div>
       )}
