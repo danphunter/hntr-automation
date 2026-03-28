@@ -19,7 +19,7 @@ function ScenePatternEditor({ pattern, onChange }) {
   }
 
   const label = pattern.length === 1
-    ? (pattern[0] === 'image' ? 'All images (Ken Burns)' : 'All video clips')
+    ? (pattern[0] === 'image' ? 'All images' : 'All video clips')
     : `Repeating: ${pattern.join(' → ')}`;
 
   return (
@@ -75,6 +75,7 @@ function StyleModal({ style, onClose, onSaved }) {
     color: style?.color || '#6366F1',
     icon: style?.icon || '🎬',
     scene_pattern: parsePattern(style?.scene_pattern),
+    slow_pan: !!style?.slow_pan,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -148,6 +149,20 @@ function StyleModal({ style, onClose, onSaved }) {
             pattern={form.scene_pattern}
             onChange={p => set('scene_pattern', p)}
           />
+
+          <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg">
+            <div>
+              <p className="text-sm font-medium text-gray-300">Slow Pan</p>
+              <p className="text-xs text-gray-600 mt-0.5">Subtle directional pan on each image during render</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => set('slow_pan', !form.slow_pan)}
+              className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.slow_pan ? 'bg-indigo-600' : 'bg-gray-700'}`}
+            >
+              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.slow_pan ? 'translate-x-5' : 'translate-x-1'}`} />
+            </button>
+          </div>
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
 

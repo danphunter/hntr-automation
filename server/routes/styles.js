@@ -50,16 +50,16 @@ router.get('/:id', authMiddleware, (req, res) => {
 
 // POST /api/styles — admin only
 router.post('/', authMiddleware, adminOnly, (req, res) => {
-  const { name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern } = req.body;
+  const { name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, slow_pan } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
 
   const db = getDb();
   const id = uuidv4();
   const patternStr = Array.isArray(scene_pattern) ? JSON.stringify(scene_pattern) : (scene_pattern || '["image"]');
   db.prepare(`
-    INSERT INTO styles (id, name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, name, description || '', prompt_prefix || '', prompt_suffix || '', color || '#6366F1', icon || '🎬', patternStr, req.user.id);
+    INSERT INTO styles (id, name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, slow_pan, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, name, description || '', prompt_prefix || '', prompt_suffix || '', color || '#6366F1', icon || '🎬', patternStr, slow_pan ? 1 : 0, req.user.id);
 
   const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(id);
   res.status(201).json({ ...style, references: [] });
@@ -68,7 +68,7 @@ router.post('/', authMiddleware, adminOnly, (req, res) => {
 // PUT /api/styles/:id — admin only
 router.put('/:id', authMiddleware, adminOnly, (req, res) => {
   const db = getDb();
-  const { name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern } = req.body;
+  const { name, description, prompt_prefix, prompt_suffix, color, icon, scene_pattern, slow_pan } = req.body;
   const patternStr = scene_pattern
     ? (Array.isArray(scene_pattern) ? JSON.stringify(scene_pattern) : scene_pattern)
     : null;
@@ -80,9 +80,10 @@ router.put('/:id', authMiddleware, adminOnly, (req, res) => {
       prompt_suffix = COALESCE(?, prompt_suffix),
       color = COALESCE(?, color),
       icon = COALESCE(?, icon),
-      scene_pattern = COALESCE(?, scene_pattern)
+      scene_pattern = COALESCE(?, scene_pattern),
+      slow_pan = COALESCE(?, slow_pan)
     WHERE id = ?
-  `).run(name, description, prompt_prefix, prompt_suffix, color, icon, patternStr, req.params.id);
+  `).run(name, description, prompt_prefix, prompt_suffix, color, icon, patternStr, slow_pan != null ? (slow_pan ? 1 : 0) : null, req.params.id);
 
   const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(req.params.id);
   const refs = db.prepare('SELECT * FROM style_references WHERE style_id = ?').all(req.params.id);

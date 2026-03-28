@@ -20,7 +20,7 @@ const renderJobs = new Map();
 router.post('/:projectId', authMiddleware, async (req, res) => {
   const db = getDb();
   const project = db.prepare(`
-    SELECT p.*, s.prompt_prefix, s.prompt_suffix, s.name as style_name
+    SELECT p.*, s.prompt_prefix, s.prompt_suffix, s.name as style_name, s.slow_pan
     FROM projects p LEFT JOIN styles s ON s.id = p.style_id
     WHERE p.id = ?
   `).get(req.params.projectId);
@@ -133,16 +133,16 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
 
     // Phase 2: Encode each scene into its own clip (one at a time to stay within memory limits)
     const FPS = 25;
+    const slowPan = !!project.slow_pan;
     const clipPaths = [];
 
     for (let i = 0; i < scenePaths.length; i++) {
       const { path: imgPath, duration: dur } = scenePaths[i];
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
-      // Static: scale to 1920x1080 and hold for scene duration
-      const filter =
-        `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
-        `fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
+      const filter = slowPan
+        ? buildPanFilter(dur, i, FPS)
+        : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
 
       console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur.toFixed(2)}s)...`);
 
@@ -190,6 +190,38 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     // Clean up tmp dir (includes individual scene clips)
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
+}
+
+// Build a subtle slow-pan filter for a scene.
+// Scales the image 8% larger than 1920x1080 to create panning room, then
+// slowly crops across it using a linear time expression. Direction cycles
+// through 4 orientations per scene so consecutive scenes pan differently.
+// Avoids zoompan (which causes frame-timing glitches).
+function buildPanFilter(dur, sceneIndex, FPS) {
+  const W = 2080, H = 1170;   // 8.3% larger than 1920×1080
+  const maxX = W - 1920;      // 160px horizontal room
+  const maxY = H - 1080;      // 90px vertical room
+  const cx = Math.round(maxX / 2);
+  const cy = Math.round(maxY / 2);
+
+  let cropX, cropY;
+  switch (sceneIndex % 4) {
+    case 0: // left → right
+      cropX = `trunc(min(t/${dur},1)*${maxX})`; cropY = String(cy); break;
+    case 1: // right → left
+      cropX = `trunc((1-min(t/${dur},1))*${maxX})`; cropY = String(cy); break;
+    case 2: // top → bottom
+      cropX = String(cx); cropY = `trunc(min(t/${dur},1)*${maxY})`; break;
+    default: // bottom → top
+      cropX = String(cx); cropY = `trunc((1-min(t/${dur},1))*${maxY})`; break;
+  }
+
+  return (
+    `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},` +
+    `fps=${FPS},` +
+    `crop=1920:1080:x='${cropX}':y='${cropY}',` +
+    `trim=duration=${dur},setpts=PTS-STARTPTS`
+  );
 }
 
 // Encode a single image into a static video clip
