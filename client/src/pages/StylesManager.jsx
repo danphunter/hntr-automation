@@ -158,9 +158,13 @@ function StyleModal({ style, onClose, onSaved }) {
             <button
               type="button"
               onClick={() => set('slow_pan', !form.slow_pan)}
-              className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${form.slow_pan ? 'bg-indigo-600' : 'bg-gray-700'}`}
+              className="relative w-10 h-6 rounded-full transition-colors flex-shrink-0"
+              style={{ backgroundColor: form.slow_pan ? '#4f46e5' : '#374151' }}
             >
-              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.slow_pan ? 'translate-x-5' : 'translate-x-1'}`} />
+              <span
+                className="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform"
+                style={{ transform: `translateX(${form.slow_pan ? 20 : 4}px)` }}
+              />
             </button>
           </div>
 

@@ -133,7 +133,7 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
 
     // Phase 2: Encode each scene into its own clip (one at a time to stay within memory limits)
     const FPS = 25;
-    const slowPan = !!project.slow_pan;
+    const slowPan = project.slow_pan === 1 || project.slow_pan === true;
     const clipPaths = [];
 
     for (let i = 0; i < scenePaths.length; i++) {

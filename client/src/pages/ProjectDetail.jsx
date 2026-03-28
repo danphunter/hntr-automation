@@ -150,7 +150,7 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
 }
 
 // ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId }) {
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview }) {
   const isGenerating = generatingId === scene.id;
   return (
     <div className="card overflow-hidden">
@@ -167,7 +167,11 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId }) {
       </div>
       <div className="p-3 flex gap-3">
         <div className="w-36 flex-shrink-0">
-          <div className="aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative">
+          <div
+            className={`aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative ${scene.image_url && !isGenerating ? "cursor-pointer hover:opacity-80" : ""}`}
+            onClick={() => scene.image_url && !isGenerating && onPreview(scene)}
+            title={scene.image_url ? "Click to enlarge" : ""}
+          >
             {scene.image_url ? (
               <img src={scene.image_url} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
             ) : (
@@ -241,8 +245,19 @@ export default function ProjectDetail() {
   const [usePlaceholders, setUsePlaceholders] = useState(false);
   const pollRef = useRef(null);
 
+  // Lightbox
+  const [lightboxScene, setLightboxScene] = useState(null);
+
   // Keep scenesRef in sync for use inside async auto-generate
   useEffect(() => { scenesRef.current = scenes; }, [scenes]);
+
+  // Sync lightbox image when scene regenerates
+  useEffect(() => {
+    if (lightboxScene) {
+      const updated = scenes.find(s => s.id === lightboxScene.id);
+      if (updated) setLightboxScene(updated);
+    }
+  }, [scenes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   useEffect(() => {
@@ -818,6 +833,7 @@ export default function ProjectDetail() {
                 index={i}
                 onRegenerate={handleRegenerateImage}
                 generatingId={generatingId}
+                onPreview={setLightboxScene}
               />
             ))}
           </div>
@@ -953,6 +969,50 @@ export default function ProjectDetail() {
             <p>â¢ Static images, no zoom effect</p>
             <p>â¢ Voiceover audio overlaid and synced</p>
             <p>â¢ 1920Ã1080 MP4, H.264, ready for CapCut</p>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxScene && (
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
+          onClick={() => setLightboxScene(null)}
+        >
+          <div className="relative w-full max-w-4xl" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => setLightboxScene(null)}
+              className="absolute -top-10 right-0 text-gray-400 hover:text-white"
+            >
+              <X size={22} />
+            </button>
+            <div className="relative rounded-xl overflow-hidden bg-gray-900">
+              {lightboxScene.image_url ? (
+                <img src={lightboxScene.image_url} alt="Scene preview" className="w-full" />
+              ) : (
+                <div className="aspect-video flex items-center justify-center text-gray-600">
+                  <Image size={48} />
+                </div>
+              )}
+              {generatingId === lightboxScene.id && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                  <Loader2 size={32} className="animate-spin text-indigo-400" />
+                </div>
+              )}
+            </div>
+            <div className="mt-3 flex items-start justify-between gap-4">
+              <p className="text-sm text-gray-300 leading-relaxed flex-1">{lightboxScene.text}</p>
+              <button
+                onClick={() => handleRegenerateImage(lightboxScene.id)}
+                disabled={generatingId === lightboxScene.id}
+                className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
+              >
+                {generatingId === lightboxScene.id
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <RefreshCw size={14} />}
+                Regenerate
+              </button>
+            </div>
           </div>
         </div>
       )}

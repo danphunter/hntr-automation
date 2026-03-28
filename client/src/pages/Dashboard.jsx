@@ -68,80 +68,81 @@ export default function Dashboard() {
       <WhiskTokenBanner />
 
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-white">Projects</h1>
-        <p className="text-gray-500 text-base mt-1">
-          {loading ? 'Loading…' : `${projects.length} total · ${completed} completed`}
-        </p>
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-4xl font-bold text-white">Projects</h1>
+          <p className="text-gray-500 text-base mt-1">
+            {loading ? 'Loading…' : `${projects.length} total · ${completed} completed`}
+          </p>
+        </div>
+        <Link
+          to="/projects/new"
+          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-700 hover:bg-indigo-600 text-white font-semibold text-sm rounded-xl transition-all"
+        >
+          <FolderPlus size={16} /> New Project
+        </Link>
       </div>
 
       {/* Project list */}
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-32 text-gray-600">
-          <Loader2 size={36} className="animate-spin mb-4" />
-          <span className="text-base">Loading projects…</span>
-        </div>
-      ) : projects.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-32 text-center">
-          <Link
-            to="/projects/new"
-            className="flex items-center gap-3 px-8 py-5 bg-violet-950/40 hover:bg-violet-900/50 border-2 border-violet-700/60 hover:border-violet-500 text-violet-300 hover:text-white font-semibold text-base rounded-2xl shadow-lg shadow-violet-900/20 transition-all hover:scale-105 active:scale-100"
-          >
-            <FolderPlus size={26} className="text-violet-400" />
-            New Project
-          </Link>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {projects.map(p => {
-            const timeTaken = formatDuration(p.started_at, p.completed_at);
-            return (
-              <div key={p.id} className="group flex items-center gap-5 p-6 rounded-2xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-900/80 transition-all">
-                <Link to={`/projects/${p.id}`} className="flex items-center gap-5 flex-1 min-w-0">
-                  <div className="w-14 h-14 rounded-xl bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
-                    <Film size={24} className="text-indigo-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-lg font-semibold text-gray-100 group-hover:text-white truncate">{p.title}</span>
-                      <StatusBadge status={p.status} />
+      <div className="border-2 border-dashed border-gray-800 rounded-2xl p-4">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-600">
+            <Loader2 size={32} className="animate-spin mb-3" />
+            <span className="text-sm">Loading projects…</span>
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="flex items-center justify-center py-20 text-gray-700 text-sm">
+            No projects yet — create one above
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {projects.map(p => {
+              const timeTaken = formatDuration(p.started_at, p.completed_at);
+              return (
+                <div key={p.id} className="group flex items-center gap-5 p-5 rounded-xl bg-gray-900 border border-gray-800 hover:border-gray-700 hover:bg-gray-900/80 transition-all">
+                  <Link to={`/projects/${p.id}`} className="flex items-center gap-5 flex-1 min-w-0">
+                    <div className="w-12 h-12 rounded-xl bg-indigo-900/40 border border-indigo-800/40 flex items-center justify-center flex-shrink-0">
+                      <Film size={20} className="text-indigo-400" />
                     </div>
-                    <div className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
-                      <span>{new Date(p.created_at).toLocaleDateString()}</span>
-                      {p.style_id && (
-                        <><span>·</span><span>{p.style_id.replace('style-', '')}</span></>
-                      )}
-                      {p.image_count > 0 && (
-                        <><span>·</span><span className="flex items-center gap-1"><Image size={12} />{p.image_count}</span></>
-                      )}
-                      {timeTaken && (
-                        <><span>·</span><span className="flex items-center gap-1 text-green-600"><Clock size={12} />{timeTaken}</span></>
-                      )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-base font-semibold text-gray-100 group-hover:text-white truncate">{p.title}</span>
+                        <StatusBadge status={p.status} />
+                      </div>
+                      <div className="text-sm text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                        {p.image_count > 0 && (
+                          <><span>·</span><span className="flex items-center gap-1"><Image size={12} />{p.image_count}</span></>
+                        )}
+                        {timeTaken && (
+                          <><span>·</span><span className="flex items-center gap-1 text-green-600"><Clock size={12} />{timeTaken}</span></>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </Link>
-                {p.status === 'complete' && (
-                  <a
-                    href={api.downloadUrl(p.id)}
-                    onClick={e => e.stopPropagation()}
-                    className="flex-shrink-0 flex items-center gap-2 text-sm text-green-400 hover:text-green-300 bg-green-900/20 hover:bg-green-900/40 border border-green-900/40 px-4 py-2 rounded-xl transition-all"
-                    title="Download final video"
+                  </Link>
+                  {p.status === 'complete' && (
+                    <a
+                      href={api.downloadUrl(p.id)}
+                      onClick={e => e.stopPropagation()}
+                      className="flex-shrink-0 flex items-center gap-2 text-sm text-green-400 hover:text-green-300 bg-green-900/20 hover:bg-green-900/40 border border-green-900/40 px-4 py-2 rounded-xl transition-all"
+                      title="Download final video"
+                    >
+                      <Download size={15} /> Download
+                    </a>
+                  )}
+                  <button
+                    onClick={e => handleDelete(e, p)}
+                    className="flex-shrink-0 p-2 text-gray-600 hover:text-red-400 hover:bg-red-900/20 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                    title="Delete project"
                   >
-                    <Download size={15} /> Download
-                  </a>
-                )}
-                <button
-                  onClick={e => handleDelete(e, p)}
-                  className="flex-shrink-0 p-2 text-gray-600 hover:text-red-400 hover:bg-red-900/20 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                  title="Delete project"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
