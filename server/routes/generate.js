@@ -11,7 +11,6 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
-const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
 const FLOW_PROJECT_ID_DEFAULT = 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
 
 function getSettings(db) {
@@ -19,108 +18,11 @@ function getSettings(db) {
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// -- Prompt sanitization (kept for whisk/flow backward compat) -----------------
+// -- Flow API ------------------------------------------------------------------
 
-const WHISK_WORD_REPLACEMENTS = {
-  'blood': 'red mist', 'bloody': 'dramatic', 'gore': 'detail', 'gory': 'intense',
-  'dead': 'still', 'death': 'stillness', 'die': 'fade', 'dying': 'fading',
-  'kill': 'halt', 'killing': 'halting', 'killer': 'figure', 'killed': 'fallen',
-  'murder': 'mystery', 'murdered': 'fallen', 'murderer': 'shadowy figure',
-  'war': 'conflict', 'warfare': 'struggle', 'battle': 'encounter', 'battles': 'encounters',
-  'combat': 'action', 'fight': 'confrontation', 'fighting': 'confrontation',
-  'attack': 'approach', 'attacked': 'confronted', 'assault': 'rush', 'assaulted': 'rushed',
-  'violence': 'intensity', 'violent': 'intense',
-  'destroy': 'transform', 'destruction': 'transformation', 'destroyed': 'transformed',
-  'weapon': 'instrument', 'weapons': 'instruments', 'armed': 'equipped',
-  'gun': 'device', 'guns': 'devices', 'rifle': 'long instrument', 'pistol': 'device',
-  'sword': 'blade', 'knife': 'tool', 'dagger': 'implement', 'spear': 'long tool',
-  'bomb': 'sphere', 'explosion': 'burst of light', 'explosive': 'powerful', 'blast': 'wave of light',
-  'military': 'organized', 'soldier': 'figure', 'soldiers': 'figures', 'warrior': 'figure', 'warriors': 'figures',
-  'troops': 'people', 'army': 'group', 'nuclear': 'powerful', 'missile': 'craft',
-  'skull': 'stone carving', 'skeleton': 'ancient structure', 'corpse': 'still figure',
-  'wound': 'mark', 'wounded': 'weathered', 'bleeding': 'glowing', 'scar': 'mark',
-  'torture': 'ordeal', 'execution': 'ceremony', 'massacre': 'upheaval',
-};
-
-function sanitizePrompt(prompt) {
-  let sanitized = prompt;
-  for (const [word, replacement] of Object.entries(WHISK_WORD_REPLACEMENTS)) {
-    sanitized = sanitized.replace(new RegExp(`\\b${word}\\b`, 'gi'), replacement);
-  }
-  if (!/^(a |an )?(digital|cinematic|artistic|photographic|illustration|painting|dramatic)/i.test(sanitized.trim())) {
-    sanitized = `A cinematic still of ${sanitized}`;
-  }
-  return sanitized.trim();
-}
-
-function makeSimpleFallbackPrompt(prompt) {
-  const stripped = prompt
-    .replace(/[^a-zA-Z0-9\s,]/g, '')
-    .replace(/\b\w{1,2}\b/g, '')
-    .trim()
-    .slice(0, 80);
-  return `A digital illustration of ${stripped}, dramatic lighting, cinematic composition`;
-}
-
-// -- Gemini/Veo functions imported from ../utils/gemini.js --------------------
-// getNextToken, markTokenUsed, markTokenRateLimited, generateViaGemini, generateViaVeo
-
-// -- Whisk API (legacy) --------------------------------------------------------
-
-async function generateViaWhisk(bearerToken, prompt) {
-  const fetch = (await import('node-fetch')).default;
-
-  const body = {
-    clientContext: {
-      workflowId: uuidv4(),
-      tool: 'BACKBONE',
-      sessionId: `;${Date.now()}`,
-    },
-    imageModelSettings: {
-      imageModel: 'IMAGEN_3_5',
-      aspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-    },
-    seed: Math.floor(Math.random() * 1000000),
-    prompt,
-    mediaCategory: 'MEDIA_CATEGORY_BOARD',
-  };
-
-  const res = await fetch('https://aisandbox-pa.googleapis.com/v1/whisk:generateImage', {
-    method: 'POST',
-    headers: {
-      'accept': '*/*',
-      'authorization': 'Bearer ' + bearerToken,
-      'content-type': 'application/json',
-      'origin': 'https://labs.google',
-      'referer': 'https://labs.google/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (res.status === 429 || res.status === 403) {
-    const text = await res.text();
-    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
-  }
-  if (!res.ok) {
-    const text = await res.text();
-    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION') || text.includes('SAFETY') || text.includes('BLOCKED')) {
-      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
-    }
-    throw new Error(`WHISK_ERROR:${res.status}:${text.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  const encodedImage = data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage;
-  if (!encodedImage) return null;
-  return Buffer.from(encodedImage, 'base64');
-}
-
-// -- Flow API (legacy) ---------------------------------------------------------
-
-async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds, flowProjectId) {
+async function generateViaFlow(bearerToken, prompt, referenceIds, flowProjectId) {
   const fetch = (await import('node-fetch')).default;
   const clientContext = {
-    ...(recaptchaToken ? { recaptchaContext: { token: recaptchaToken, applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB' } } : {}),
     projectId: flowProjectId,
     tool: 'PINHOLE',
     sessionId: `;${Date.now()}`,
@@ -179,20 +81,6 @@ async function saveImageFromBuffer(buffer) {
 
 // -- Routes --------------------------------------------------------------------
 
-// GET /api/generate/flow-config
-router.get('/flow-config', authMiddleware, (req, res) => {
-  const db = getDb();
-  const settings = getSettings(db);
-  const imageProvider = settings.image_provider || 'flow';
-  const wt = getNextToken(db);
-  res.json({
-    siteKey: RECAPTCHA_SITE_KEY,
-    hasToken: !!wt,
-    imageProvider,
-    bearerToken: wt?.token || null,
-  });
-});
-
 // POST /api/generate/save-image
 router.post('/save-image', authMiddleware, async (req, res) => {
   const { sceneId, fifeUrl } = req.body;
@@ -225,8 +113,6 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const settings = getSettings(db);
-  const imageProvider = settings.image_provider || 'flow';
-  const { recaptchaToken } = req.body;
 
   let rawPrompt = scene.image_prompt || scene.text;
   let referenceIds = [];
@@ -239,9 +125,8 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
 
-  let prompt = imageProvider === 'whisk' ? sanitizePrompt(rawPrompt) : rawPrompt;
+  let prompt = rawPrompt;
   let imageBuffer = null;
-  let source = 'unknown';
   let triedCount = 0;
   let unsafeContentRetried = false;
 
@@ -250,29 +135,29 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     if (!wt) {
       const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-      const msg = triedCount === 0 ? 'No active Bearer tokens — add a token in Settings' : 'All Bearer tokens are rate-limited — add a fresh token in Settings';
+      const msg = triedCount === 0
+        ? 'No active Bearer tokens — add a token in Settings'
+        : 'All Bearer tokens are rate-limited — add a fresh token in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
     triedCount++;
-    // Use per-token projectId for Flow; fall back to global setting or default
     const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
     try {
-      let buffer;
-      if (imageProvider === 'flow') {
-        buffer = await generateViaFlow(wt.token.trim(), recaptchaToken, prompt, referenceIds, projectId);
-      } else {
-        buffer = await generateViaWhisk(wt.token.trim(), prompt);
+      const buffer = await generateViaFlow(wt.token.trim(), prompt, referenceIds, projectId);
+      if (buffer) {
+        markTokenUsed(db, wt.id);
+        imageBuffer = buffer;
+        break;
       }
-      if (buffer) { markTokenUsed(db, wt.id); imageBuffer = buffer; source = `${imageProvider}:${wt.label}`; break; }
-      markTokenRateLimited(db, wt.id, `Empty response from ${imageProvider}`);
+      markTokenRateLimited(db, wt.id, 'Empty response from Flow');
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
         console.log(`Token "${wt.label}" rate limited, rotating...`);
       } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
-        console.warn(`Safety filter triggered, retrying with fallback prompt`);
+        console.warn(`Safety filter triggered, retrying with scene text only`);
         unsafeContentRetried = true;
-        prompt = makeSimpleFallbackPrompt(rawPrompt);
+        prompt = scene.text;
         triedCount--;
         continue;
       } else {
@@ -293,7 +178,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const { filename, imgPath } = await saveImageFromBuffer(imageBuffer);
   const localUrl = `/api/generate/image-file/${filename}`;
   db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?').run(localUrl, imgPath, 'generated', scene.id);
-  res.json({ image_url: localUrl, prompt, source });
+  res.json({ image_url: localUrl, prompt });
 });
 
 // GET /api/generate/image-file/:filename
@@ -313,7 +198,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
   const settings = getSettings(db);
-  const apiKey = settings.openai_api_key?.trim();
+  const apiKey = settings.openai_api_key?.trim() || process.env.OPENAI_API_KEY?.trim();
 
   let styleContext = '';
   if (project.style_id) {
@@ -323,12 +208,10 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 
   if (!apiKey) {
     const updated = scenes.map(scene => {
-      const stylePrefix = styleContext ? `${styleContext}, ` : '';
-      const prompt = `${stylePrefix}cinematic scene, dramatic lighting, high detail, photorealistic, 16:9 widescreen, no text, no words`;
-      db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
-      return { id: scene.id, image_prompt: prompt };
+      db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(scene.text, scene.id);
+      return { id: scene.id, image_prompt: scene.text };
     });
-    return res.json({ scenes: updated, demo: true });
+    return res.json({ scenes: updated });
   }
 
   const systemPrompt = [
@@ -345,13 +228,14 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   ].filter(Boolean).join('\n');
 
   const fetch = (await import('node-fetch')).default;
+
   const updated = [];
   for (const scene of scenes) {
     let prompt = scene.text;
     try {
       const resp = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
@@ -373,10 +257,10 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
     updated.push({ id: scene.id, image_prompt: prompt });
   }
-  res.json({ scenes: updated, demo: false });
+  res.json({ scenes: updated });
 });
 
-// -- API Key Management --------------------------------------------------------
+// -- Bearer token management ---------------------------------------------------
 
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -390,7 +274,7 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
   const { label, token, project_id } = req.body;
   if (!label || !token) return res.status(400).json({ error: 'label and token required' });
   const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
-  const cleanProjectId = (project_id || 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077').trim();
+  const cleanProjectId = (project_id || FLOW_PROJECT_ID_DEFAULT).trim();
   const db = getDb();
   const id = uuidv4();
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM whisk_tokens').get().m;
