@@ -20,7 +20,7 @@ const renderJobs = new Map();
 router.post('/:projectId', authMiddleware, async (req, res) => {
   const db = getDb();
   const project = db.prepare(`
-    SELECT p.*, s.prompt_prefix, s.prompt_suffix, s.name as style_name, s.slow_pan
+    SELECT p.*, s.prompt_prefix, s.prompt_suffix, s.name as style_name
     FROM projects p LEFT JOIN styles s ON s.id = p.style_id
     WHERE p.id = ?
   `).get(req.params.projectId);
@@ -73,8 +73,6 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   const tmpDir = path.join(RENDERS_DIR, `tmp-${jobId}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const slowPan = project.slow_pan === 1 || project.slow_pan === true;
-
   function setStatus(progress, message) {
     renderJobs.set(jobId, { status: 'processing', progress, message, projectId: project.id });
   }
@@ -116,9 +114,7 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
       setStatus(10 + Math.round((i / scenePaths.length) * 75), `Encoding scene ${i + 1}/${scenePaths.length}...`);
       console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding image (${dur.toFixed(2)}s)...`);
 
-      const filter = slowPan
-        ? buildPanFilter(dur, i, FPS)
-        : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
+      const filter = `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
 
       try {
         await renderSceneClip(imgPath, clipPath, filter, dur);
@@ -157,29 +153,6 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   }
 }
 
-// Build slow-pan (Ken Burns) filter for static images
-function buildPanFilter(dur, sceneIndex, FPS) {
-  const W = 2080, H = 1170;
-  const maxX = W - 1920;
-  const maxY = H - 1080;
-  const cx = Math.round(maxX / 2);
-  const cy = Math.round(maxY / 2);
-
-  let cropX, cropY;
-  switch (sceneIndex % 4) {
-    case 0: cropX = `trunc(min(t/${dur},1)*${maxX})`; cropY = String(cy); break;
-    case 1: cropX = `trunc((1-min(t/${dur},1))*${maxX})`; cropY = String(cy); break;
-    case 2: cropX = String(cx); cropY = `trunc(min(t/${dur},1)*${maxY})`; break;
-    default: cropX = String(cx); cropY = `trunc((1-min(t/${dur},1))*${maxY})`; break;
-  }
-
-  return (
-    `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},` +
-    `fps=${FPS},` +
-    `crop=1920:1080:x='${cropX}':y='${cropY}',` +
-    `trim=duration=${dur},setpts=PTS-STARTPTS`
-  );
-}
 
 function renderSceneClip(imgPath, clipPath, filter, duration) {
   return new Promise((resolve, reject) => {

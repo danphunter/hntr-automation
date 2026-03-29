@@ -897,7 +897,7 @@ export default function ProjectDetail() {
           <div className="card p-4 bg-gray-900/30 text-xs text-gray-500 space-y-1">
             <p className="font-medium text-gray-400">What gets exported:</p>
             <p>• Each scene image displayed for its duration</p>
-            <p>• Static images, no zoom effect</p>
+            <p>• Static images</p>
             <p>• Voiceover audio overlaid and synced</p>
             <p>• 1920x1080 MP4, H.264, ready for CapCut</p>
           </div>

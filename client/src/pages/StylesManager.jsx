@@ -75,7 +75,6 @@ function StyleModal({ style, onClose, onSaved }) {
     color: style?.color || '#6366F1',
     icon: style?.icon || '🎬',
     scene_pattern: parsePattern(style?.scene_pattern),
-    slow_pan: !!style?.slow_pan,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -149,31 +148,6 @@ function StyleModal({ style, onClose, onSaved }) {
             pattern={form.scene_pattern}
             onChange={p => set('scene_pattern', p)}
           />
-
-          <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg">
-            <div>
-              <p className="text-sm font-medium text-gray-300">Slow Pan</p>
-              <p className="text-xs text-gray-600 mt-0.5">Subtle directional pan on each image during render</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => set('slow_pan', !form.slow_pan)}
-              style={{
-                position: 'relative', width: 40, height: 24, borderRadius: 12, border: 'none',
-                cursor: 'pointer', flexShrink: 0,
-                backgroundColor: form.slow_pan ? '#4f46e5' : '#374151',
-                transition: 'background-color 150ms',
-              }}
-            >
-              <span style={{
-                position: 'absolute', top: 4, left: 4, width: 16, height: 16,
-                borderRadius: '50%', backgroundColor: 'white',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                transform: `translateX(${form.slow_pan ? 16 : 0}px)`,
-                transition: 'transform 150ms',
-              }} />
-            </button>
-          </div>
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
