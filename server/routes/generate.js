@@ -8,7 +8,9 @@ const { authMiddleware } = require('../middleware/auth');
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
+const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
+if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
 // Legacy constants kept for backward compatibility with existing whisk/flow provider settings
 const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
@@ -163,6 +165,139 @@ async function generateViaGemini(apiKey, prompt) {
   return Buffer.from(encoded, 'base64');
 }
 
+// -- Gemini API (Veo 2) --------------------------------------------------------
+// Uses predictLongRunning for async video generation, then polls until done.
+// The generated image is passed as a base64-encoded frame to drive image-to-video.
+
+async function generateViaVeo(apiKey, imageBuffer, motionPrompt) {
+  const fetch = (await import('node-fetch')).default;
+
+  const body = {
+    instances: [{
+      prompt: motionPrompt,
+      image: {
+        bytesBase64Encoded: imageBuffer.toString('base64'),
+        mimeType: 'image/jpeg',
+      },
+    }],
+    parameters: {
+      aspectRatio: '16:9',
+      durationSeconds: 8,
+      sampleCount: 1,
+    },
+  };
+
+  // Start the long-running operation
+  const startRes = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (startRes.status === 429) {
+    const text = await startRes.text();
+    console.log('Veo rate-limited:', startRes.status, text.slice(0, 500));
+    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+  }
+
+  if (startRes.status === 403) {
+    const text = await startRes.text();
+    console.log('Veo forbidden:', startRes.status, text.slice(0, 500));
+    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+  }
+
+  if (!startRes.ok) {
+    const text = await startRes.text();
+    console.log('Veo start error:', startRes.status, text.slice(0, 500));
+    if (text.includes('PROHIBITED_CONTENT') || text.includes('SAFETY') || text.includes('BLOCKED')) {
+      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
+    }
+    throw new Error(`VEO_ERROR:${startRes.status}:${text.slice(0, 200)}`);
+  }
+
+  const operation = await startRes.json();
+  const operationName = operation.name;
+  if (!operationName) {
+    console.log('Veo start response (no operation name):', JSON.stringify(operation).slice(0, 500));
+    throw new Error('VEO_ERROR: No operation name returned');
+  }
+
+  console.log('[veo] Operation started:', operationName);
+
+  // Poll until done — max 15 minutes (90 polls × 10s)
+  const MAX_POLLS = 90;
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, 10000));
+
+    const pollRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/${operationName}`,
+      { headers: { 'x-goog-api-key': apiKey } }
+    );
+
+    if (!pollRes.ok) {
+      const text = await pollRes.text();
+      throw new Error(`VEO_POLL_ERROR:${pollRes.status}:${text.slice(0, 200)}`);
+    }
+
+    const status = await pollRes.json();
+
+    if (status.error) {
+      throw new Error(`VEO_ERROR:${JSON.stringify(status.error).slice(0, 200)}`);
+    }
+
+    if (!status.done) {
+      console.log(`[veo] Poll ${i + 1}/${MAX_POLLS}: still running...`);
+      continue;
+    }
+
+    console.log('[veo] Operation complete, extracting video...');
+
+    // Handle both possible response shapes
+    const response = status.response || {};
+
+    // Shape A: { generateVideoResponse: { generatedSamples: [{ video: {...} }] } }
+    // Shape B: { predictions: [{ bytesBase64Encoded, mimeType }] }
+    const samples = response.generateVideoResponse?.generatedSamples
+      || response.generatedSamples;
+
+    if (samples && samples.length > 0) {
+      const video = samples[0].video || samples[0];
+      if (video.bytesBase64Encoded) {
+        return Buffer.from(video.bytesBase64Encoded, 'base64');
+      }
+      if (video.uri) {
+        const vidRes = await fetch(video.uri, {
+          headers: { 'x-goog-api-key': apiKey },
+        });
+        if (!vidRes.ok) throw new Error(`Failed to download video from URI: ${vidRes.status}`);
+        return await vidRes.buffer();
+      }
+    }
+
+    const predictions = response.predictions;
+    if (predictions && predictions.length > 0) {
+      const pred = predictions[0];
+      if (pred.bytesBase64Encoded) return Buffer.from(pred.bytesBase64Encoded, 'base64');
+      if (pred.videoUri) {
+        const vidRes = await fetch(pred.videoUri, { headers: { 'x-goog-api-key': apiKey } });
+        if (!vidRes.ok) throw new Error(`Failed to download video: ${vidRes.status}`);
+        return await vidRes.buffer();
+      }
+    }
+
+    console.log('[veo] Unexpected done response shape:', JSON.stringify(response).slice(0, 500));
+    throw new Error('VEO_ERROR: Unrecognised response shape — check server logs');
+  }
+
+  throw new Error('VEO_ERROR: Operation timed out after 15 minutes');
+}
+
 // -- Whisk API (legacy) --------------------------------------------------------
 
 async function generateViaWhisk(bearerToken, prompt) {
@@ -187,52 +322,42 @@ async function generateViaWhisk(bearerToken, prompt) {
     method: 'POST',
     headers: {
       'accept': '*/*',
-      'accept-language': 'en-US,en;q=0.9',
       'authorization': 'Bearer ' + bearerToken,
       'content-type': 'application/json',
       'origin': 'https://labs.google',
       'referer': 'https://labs.google/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     },
     body: JSON.stringify(body),
   });
 
   if (res.status === 429 || res.status === 403) {
     const text = await res.text();
-    console.log('Whisk rate-limited/forbidden:', res.status, text.slice(0, 500));
     throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
   }
-
   if (!res.ok) {
     const text = await res.text();
-    console.log('Whisk error:', res.status, text.slice(0, 500));
     if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION') || text.includes('SAFETY') || text.includes('BLOCKED')) {
       throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
     }
     throw new Error(`WHISK_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
-
   const data = await res.json();
   const encodedImage = data?.imagePanels?.[0]?.generatedImages?.[0]?.encodedImage;
-  if (!encodedImage) {
-    console.log('Whisk response missing encodedImage:', JSON.stringify(data).slice(0, 500));
-    return null;
-  }
+  if (!encodedImage) return null;
   return Buffer.from(encodedImage, 'base64');
 }
 
-// -- Flow API (legacy, requires reCAPTCHA) -------------------------------------
+// -- Flow API (legacy) ---------------------------------------------------------
 
 async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds, flowProjectId) {
   const fetch = (await import('node-fetch')).default;
-
   const clientContext = {
     ...(recaptchaToken ? { recaptchaContext: { token: recaptchaToken, applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB' } } : {}),
     projectId: flowProjectId,
     tool: 'PINHOLE',
     sessionId: `;${Date.now()}`,
   };
-
   const body = {
     clientContext,
     mediaGenerationContext: { batchId: uuidv4() },
@@ -243,67 +368,38 @@ async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds
       imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
       structuredPrompt: { parts: [{ text: prompt }] },
       seed: Math.floor(Math.random() * 1000000),
-      imageInputs: (referenceIds || []).map(id => ({
-        imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE',
-        name: id,
-      })),
+      imageInputs: (referenceIds || []).map(id => ({ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: id })),
     }],
   };
-
   const res = await fetch(
     `https://aisandbox-pa.googleapis.com/v1/projects/${flowProjectId}/flowMedia:batchGenerateImages`,
     {
       method: 'POST',
       headers: {
         'accept': '*/*',
-        'accept-language': 'en-US,en;q=0.9',
         'authorization': 'Bearer ' + bearerToken,
         'content-type': 'application/json',
         'origin': 'https://labs.google',
         'referer': 'https://labs.google/',
-        'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'cross-site',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
-        'x-browser-channel': 'stable',
-        'x-browser-copyright': 'Copyright 2026 Google LLC. All rights reserved.',
-        'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
-        'x-browser-year': '2026',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
       body: JSON.stringify(body),
     }
   );
-
   if (res.status === 429 || res.status === 403) {
     const text = await res.text();
-    console.log('Flow rate-limited/forbidden:', res.status, text.slice(0, 500));
     throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
   }
-
   if (!res.ok) {
     const text = await res.text();
-    console.log('Flow error:', res.status, text.slice(0, 500));
-    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION')) {
-      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
-    }
+    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION')) throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
     throw new Error(`FLOW_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
-
   const data = await res.json();
   const fifeUrl = data?.media?.[0]?.image?.generatedImage?.fifeUrl;
-  if (!fifeUrl) {
-    console.log('Flow response missing fifeUrl:', JSON.stringify(data).slice(0, 500));
-    return null;
-  }
-
-  // Download image from the signed GCS URL
+  if (!fifeUrl) return null;
   const imgRes = await fetch(fifeUrl);
-  if (!imgRes.ok) {
-    throw new Error(`Failed to download image from fifeUrl: ${imgRes.status}`);
-  }
+  if (!imgRes.ok) throw new Error(`Failed to download image from fifeUrl: ${imgRes.status}`);
   return await imgRes.buffer();
 }
 
@@ -316,51 +412,43 @@ async function saveImageFromBuffer(buffer) {
 
 // -- Routes --------------------------------------------------------------------
 
-// GET /api/generate/flow-config -- returns image generation config for the client
+// GET /api/generate/flow-config
 router.get('/flow-config', authMiddleware, (req, res) => {
   const db = getDb();
   const settings = getSettings(db);
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT || null;
   const imageProvider = settings.image_provider || 'gemini';
+  const veoEnabled = settings.veo_enabled === 'true' || settings.veo_enabled === '1';
   const wt = getNextToken(db);
   res.json({
     flowProjectId,
     siteKey: RECAPTCHA_SITE_KEY,
     hasToken: !!wt,
     imageProvider,
-    // Only expose bearer token for legacy whisk/flow providers (never for gemini)
+    veoEnabled,
     bearerToken: (imageProvider !== 'gemini' && wt?.token) ? wt.token : null,
   });
 });
 
-// POST /api/generate/save-image -- download a fifeUrl and save it for a scene
+// POST /api/generate/save-image
 router.post('/save-image', authMiddleware, async (req, res) => {
   const { sceneId, fifeUrl } = req.body;
   if (!sceneId || !fifeUrl) return res.status(400).json({ error: 'sceneId and fifeUrl required' });
-
   const db = getDb();
   const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(sceneId);
   if (!scene) return res.status(404).json({ error: 'Scene not found' });
-
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
-  if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
-
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
   try {
     const fetch = (await import('node-fetch')).default;
     const imgRes = await fetch(fifeUrl);
-    if (!imgRes.ok) return res.status(502).json({ error: `Failed to download image from fifeUrl: ${imgRes.status}` });
+    if (!imgRes.ok) return res.status(502).json({ error: `Failed to download image: ${imgRes.status}` });
     const buffer = await imgRes.buffer();
-
     const { filename, imgPath } = await saveImageFromBuffer(buffer);
     const localUrl = `/api/generate/image-file/${filename}`;
-    db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?')
-      .run(localUrl, imgPath, 'generated', scene.id);
-
+    db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?').run(localUrl, imgPath, 'generated', scene.id);
     res.json({ image_url: localUrl });
   } catch (err) {
-    console.error('save-image error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -370,21 +458,16 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const db = getDb();
   const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
   if (!scene) return res.status(404).json({ error: 'Scene not found' });
-
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
-  if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const settings = getSettings(db);
   const imageProvider = settings.image_provider || 'gemini';
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
   const { recaptchaToken } = req.body;
 
-  // Build prompt with style prefix/suffix
   let rawPrompt = scene.image_prompt || scene.text;
   let referenceIds = [];
-
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
@@ -396,10 +479,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
 
-  // Sanitize prompt for Whisk (has safety filters); Gemini and Flow handle it themselves
   let prompt = imageProvider === 'whisk' ? sanitizePrompt(rawPrompt) : rawPrompt;
-
-  // Token rotation loop
   let imageBuffer = null;
   let source = 'unknown';
   let triedCount = 0;
@@ -408,18 +488,11 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   while (true) {
     const wt = getNextToken(db);
     if (!wt) {
-      const cooldown = db.prepare(`
-        SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs
-        FROM whisk_tokens
-        WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL
-      `).get();
+      const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-      const msg = triedCount === 0
-        ? 'No active API keys — add a Gemini API key in Settings'
-        : 'All API keys are rate-limited — add a fresh key in Settings';
+      const msg = triedCount === 0 ? 'No active API keys — add a Gemini API key in Settings' : 'All API keys are rate-limited — add a fresh key in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
-
     triedCount++;
     try {
       let buffer;
@@ -430,22 +503,16 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       } else {
         buffer = await generateViaWhisk(wt.token.trim(), prompt);
       }
-      if (buffer) {
-        markTokenUsed(db, wt.id);
-        imageBuffer = buffer;
-        source = `${imageProvider}:${wt.label}`;
-        break;
-      }
+      if (buffer) { markTokenUsed(db, wt.id); imageBuffer = buffer; source = `${imageProvider}:${wt.label}`; break; }
       markTokenRateLimited(db, wt.id, `Empty response from ${imageProvider}`);
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
         console.log(`Key "${wt.label}" rate limited, rotating...`);
       } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
-        console.warn(`Safety filter triggered, retrying with fallback prompt. Key: "${wt.label}"`);
+        console.warn(`Safety filter triggered, retrying with fallback prompt`);
         unsafeContentRetried = true;
         prompt = makeSimpleFallbackPrompt(rawPrompt);
-        console.log('Fallback prompt:', prompt);
         triedCount--;
         continue;
       } else {
@@ -453,29 +520,19 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
         console.error(`Key "${wt.label}" error:`, err.message);
       }
     }
-
     const totalTokens = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
     if (triedCount >= totalTokens) break;
   }
 
   if (!imageBuffer) {
-    const cooldown = db.prepare(`
-      SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs
-      FROM whisk_tokens
-      WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL
-    `).get();
+    const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
     const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-    return res.status(429).json({
-      error: 'All API keys are rate-limited or exhausted — add a fresh key in Settings',
-      retry_after: retrySecs,
-    });
+    return res.status(429).json({ error: 'All API keys are rate-limited or exhausted — add a fresh key in Settings', retry_after: retrySecs });
   }
 
   const { filename, imgPath } = await saveImageFromBuffer(imageBuffer);
   const localUrl = `/api/generate/image-file/${filename}`;
-  db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?')
-    .run(localUrl, imgPath, 'generated', scene.id);
-
+  db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?').run(localUrl, imgPath, 'generated', scene.id);
   res.json({ image_url: localUrl, prompt, source });
 });
 
@@ -487,14 +544,98 @@ router.get('/image-file/:filename', (req, res) => {
   res.sendFile(imgPath);
 });
 
-// POST /api/generate/prompts/:projectId -- auto-generate all image prompts
+// POST /api/generate/video/:sceneId — animate a scene image with Veo
+router.post('/video/:sceneId', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  if (!scene.image_url && !scene.image_path) {
+    return res.status(400).json({ error: 'Generate an image for this scene first' });
+  }
+
+  // Load the generated image from disk
+  let imageBuffer;
+  try {
+    const imgFilename = path.basename(scene.image_url || scene.image_path || '');
+    const imgPath = path.join(IMAGES_DIR, imgFilename);
+    if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Image file not found on disk' });
+    imageBuffer = fs.readFileSync(imgPath);
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to read image: ${err.message}` });
+  }
+
+  // Build a motion prompt that matches the style's slow_pan preference
+  const style = project.style_id ? db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id) : null;
+  const slowPan = style?.slow_pan === 1 || style?.slow_pan === true;
+  const motionPrompt = slowPan
+    ? 'Cinematic slow camera pan across the scene, smooth parallax depth, atmospheric mood, photorealistic motion, no text'
+    : 'Gentle cinematic camera movement, subtle zoom and atmospheric motion, high quality, photorealistic, no text';
+
+  // Rotate through API keys (same pool as image generation)
+  let videoBuffer = null;
+  let triedCount = 0;
+
+  while (true) {
+    const wt = getNextToken(db);
+    if (!wt) {
+      const msg = triedCount === 0
+        ? 'No active API keys — add a Gemini API key in Settings'
+        : 'All API keys are rate-limited — try again shortly';
+      return res.status(429).json({ error: msg });
+    }
+    triedCount++;
+    try {
+      const buf = await generateViaVeo(wt.token.trim(), imageBuffer, motionPrompt);
+      if (buf) { markTokenUsed(db, wt.id); videoBuffer = buf; break; }
+      markTokenRateLimited(db, wt.id, 'Empty response from Veo');
+    } catch (err) {
+      if (err.message.startsWith('RATE_LIMITED')) {
+        markTokenRateLimited(db, wt.id, err.message.slice(12));
+        console.log(`Key "${wt.label}" Veo rate limited, rotating...`);
+      } else {
+        // Non-retryable errors (safety, timeout, bad response) — mark and stop
+        markTokenRateLimited(db, wt.id, err.message);
+        console.error(`Key "${wt.label}" Veo error:`, err.message);
+        // Only rotate for rate-limit errors; abort for other errors
+        return res.status(500).json({ error: `Veo generation failed: ${err.message}` });
+      }
+    }
+    const total = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
+    if (triedCount >= total) break;
+  }
+
+  if (!videoBuffer) {
+    return res.status(429).json({ error: 'All API keys are rate-limited for Veo — try again shortly' });
+  }
+
+  const filename = `vid-${uuidv4()}.mp4`;
+  const vidPath = path.join(VIDEOS_DIR, filename);
+  fs.writeFileSync(vidPath, videoBuffer);
+  const localUrl = `/api/generate/video-file/${filename}`;
+
+  db.prepare('UPDATE scenes SET video_url = ?, video_path = ?, video_status = ? WHERE id = ?')
+    .run(localUrl, vidPath, 'generated', scene.id);
+
+  res.json({ video_url: localUrl });
+});
+
+// GET /api/generate/video-file/:filename
+router.get('/video-file/:filename', (req, res) => {
+  const vidPath = path.join(VIDEOS_DIR, path.basename(req.params.filename));
+  if (!vidPath.startsWith(VIDEOS_DIR)) return res.status(404).json({ error: 'Not found' });
+  if (!fs.existsSync(vidPath)) return res.status(404).json({ error: 'Not found' });
+  res.sendFile(vidPath);
+});
+
+// POST /api/generate/prompts/:projectId
 router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const db = getDb();
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
   const settings = getSettings(db);
@@ -574,7 +715,6 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const { label, token } = req.body;
   if (!label || !token) return res.status(400).json({ error: 'label and token required' });
-  // Strip accidental "Bearer " prefix (harmless for API keys)
   const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
   const db = getDb();
   const id = uuidv4();

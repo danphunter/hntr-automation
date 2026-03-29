@@ -244,6 +244,40 @@ export default function Settings() {
       </form>
 
       <div className="mt-6 space-y-6">
+        <Section title="Veo Animation (image-to-video)">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-gray-200">Animate scenes with Veo 2.0</div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                After each image is generated, Veo animates it into an 8-second video clip.
+                The render step then stitches these clips together instead of applying the Ken Burns effect.
+                Uses the same Gemini API keys. Each clip takes ~1–3 minutes to generate.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !(values.veo_enabled === 'true' || values.veo_enabled === '1');
+                onChange('veo_enabled', next ? 'true' : 'false');
+                api.saveSettings({ veo_enabled: next ? 'true' : 'false' });
+              }}
+              className={`ml-4 flex-shrink-0 w-12 h-6 rounded-full border-2 transition-colors relative ${
+                (values.veo_enabled === 'true' || values.veo_enabled === '1')
+                  ? 'bg-indigo-600 border-indigo-500'
+                  : 'bg-gray-700 border-gray-600'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                (values.veo_enabled === 'true' || values.veo_enabled === '1') ? 'translate-x-6' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
+          <p className="text-xs text-gray-600">
+            Note: Veo image-to-video is currently available to Google One AI Premium subscribers and select API tiers.
+            If generation fails, the render will fall back to static images with the Ken Burns effect automatically.
+          </p>
+        </Section>
+
         <GeminiKeysSection />
       </div>
     </div>

@@ -92,8 +92,10 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
 }
 
 // ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview }) {
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId, onPreview }) {
   const isGenerating = generatingId === scene.id;
+  const isAnimating = animatingId === scene.id;
+  const hasVideo = !!scene.video_url;
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border-b border-gray-800">
@@ -103,6 +105,16 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
         <span className="text-xs font-mono text-gray-500 flex-1 truncate">
           {formatTime(scene.start_time)} → {formatTime(scene.end_time)} · {scene.duration}s
         </span>
+        {isAnimating && (
+          <span className="text-xs text-purple-400 flex items-center gap-1 flex-shrink-0">
+            <Loader2 size={11} className="animate-spin" /> Animating…
+          </span>
+        )}
+        {!isAnimating && hasVideo && (
+          <span className="text-xs text-purple-400 flex items-center gap-1 flex-shrink-0">
+            <Film size={11} /> Animated
+          </span>
+        )}
         {isGenerating && <Loader2 size={13} className="animate-spin text-indigo-400 flex-shrink-0" />}
         {!isGenerating && scene.status === 'generated' && <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />}
         {!isGenerating && scene.status !== 'generated' && <Clock size={13} className="text-gray-600 flex-shrink-0" />}
@@ -123,7 +135,7 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
                   : <Image size={20} />}
               </div>
             )}
-            {isGenerating && scene.image_url && (
+            {(isGenerating || isAnimating) && scene.image_url && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                 <Loader2 size={18} className="animate-spin text-indigo-400" />
               </div>
@@ -131,7 +143,7 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
           </div>
           <button
             onClick={() => onRegenerate(scene.id)}
-            disabled={isGenerating || !scene.image_url}
+            disabled={isGenerating || isAnimating || !scene.image_url}
             className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
@@ -177,6 +189,7 @@ export default function ProjectDetail() {
   // Step 4
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
+  const [animatingId, setAnimatingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const autoGenTriggered = useRef(false);
@@ -365,13 +378,6 @@ export default function ProjectDetail() {
 
   // ââ Step 4 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-  // Generate a single image for a scene. Uses Flow (extension) or Whisk (server)
-  // depending on the image_provider setting returned by flow-config.
-  async function generateOneImage(scene, flowConfig) {
-    // Server handles generation directly for both Flow and Whisk (no extension needed)
-    return api.generateImage(scene.id);
-  }
-
   async function handleAutoGenerate(initialScenes) {
     setGeneratingAll(true);
     setError('');
@@ -394,6 +400,7 @@ export default function ProjectDetail() {
       }
 
       const flowConfig = await api.getFlowConfig();
+      const veoEnabled = flowConfig.veoEnabled;
 
       // Generate images for pending scenes
       const pending = workingScenes.filter(s => s.status !== 'generated');
@@ -404,10 +411,27 @@ export default function ProjectDetail() {
         setGeneratingId(scene.id);
         setGenProgress({ current: i + 1, total: pending.length });
         try {
-          const result = await generateOneImage(scene, flowConfig);
+          const result = await api.generateImage(scene.id);
           setScenes(prev => prev.map(s =>
             s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
           ));
+
+          // Animate with Veo if enabled (each clip ~1–3 min — runs synchronously per scene)
+          if (veoEnabled) {
+            setGeneratingId(null);
+            setAnimatingId(scene.id);
+            try {
+              const vidResult = await api.generateVideo(scene.id);
+              setScenes(prev => prev.map(s =>
+                s.id === scene.id ? { ...s, video_url: vidResult.video_url, video_status: 'generated' } : s
+              ));
+            } catch (vidErr) {
+              console.warn(`Scene ${(scene.scene_order ?? i) + 1} Veo failed, continuing:`, vidErr.message);
+            } finally {
+              setAnimatingId(null);
+            }
+            setGeneratingId(scene.id); // restore for progress display continuity
+          }
         } catch (err) {
           setError(`Scene ${(scene.scene_order ?? i) + 1}: ${err.message}`);
         }
@@ -415,6 +439,7 @@ export default function ProjectDetail() {
     } finally {
       setGeneratingAll(false);
       setGeneratingId(null);
+      setAnimatingId(null);
     }
   }
 
@@ -423,12 +448,27 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      const flowConfig = await api.getFlowConfig();
-      const scene = scenes.find(s => s.id === sceneId);
-      const result = await generateOneImage(scene, flowConfig);
+      const result = await api.generateImage(sceneId);
       setScenes(prev => prev.map(s =>
-        s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated' } : s
+        s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated', video_url: null, video_status: 'pending' } : s
       ));
+
+      // Re-animate if Veo is enabled
+      const flowConfig = await api.getFlowConfig();
+      if (flowConfig.veoEnabled) {
+        setGeneratingId(null);
+        setAnimatingId(sceneId);
+        try {
+          const vidResult = await api.generateVideo(sceneId);
+          setScenes(prev => prev.map(s =>
+            s.id === sceneId ? { ...s, video_url: vidResult.video_url, video_status: 'generated' } : s
+          ));
+        } catch (vidErr) {
+          console.warn('Veo re-animation failed:', vidErr.message);
+        } finally {
+          setAnimatingId(null);
+        }
+      }
     } catch (err) { setError(err.message); }
     finally { setGeneratingId(null); }
   }
@@ -775,6 +815,7 @@ export default function ProjectDetail() {
                 index={i}
                 onRegenerate={handleRegenerateImage}
                 generatingId={generatingId}
+                animatingId={animatingId}
                 onPreview={setLightboxScene}
               />
             ))}

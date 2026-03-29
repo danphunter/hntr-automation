@@ -152,6 +152,9 @@ function initDb() {
     "UPDATE projects SET style_id = NULL WHERE style_id IN ('style-bible','style-finance','style-history','style-whiteboard','style-science')",
     "DELETE FROM styles WHERE id IN ('style-bible','style-finance','style-history','style-whiteboard','style-science')",
     "UPDATE styles SET prompt_prefix = 'photorealistic modern military documentary, early 2000s warfare, post-9/11 era combat circa 2001-2010, tactical infantry, realistic war photography style,', prompt_suffix = ', no text, no words, no letters, no captions, no watermarks, no typography, no writing, gritty war photography, cinematic 16:9' WHERE name = 'War Archives'",
+    "ALTER TABLE scenes ADD COLUMN video_url TEXT",
+    "ALTER TABLE scenes ADD COLUMN video_path TEXT",
+    "ALTER TABLE scenes ADD COLUMN video_status TEXT DEFAULT 'pending'",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}

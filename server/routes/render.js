@@ -11,6 +11,7 @@ const router = express.Router();
 const RENDERS_DIR = path.join(__dirname, '..', 'renders');
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
+const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 
 // Track active render jobs
@@ -33,7 +34,6 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
   if (!scenes.length) return res.status(400).json({ error: 'No scenes found' });
 
-  // Require at least 1 scene with a generated image before starting FFmpeg
   const scenesWithImages = scenes.filter(s => s.image_url);
   if (scenesWithImages.length === 0) {
     return res.status(400).json({ error: 'No images generated yet — generate images for your scenes before rendering' });
@@ -44,7 +44,6 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'No audio file uploaded' });
   }
 
-  // Check all scenes have images (demo or real)
   const missingScenesCount = scenes.filter(s => !s.image_url && !s.image_path).length;
   if (missingScenesCount > 0 && !req.body.usePlaceholders) {
     return res.status(400).json({
@@ -63,7 +62,6 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
 
   res.json({ jobId, message: 'Render started' });
 
-  // Run render async
   runRender(jobId, project, scenes, audioPath, outputPath, outputFilename, db).catch(err => {
     console.error('Render failed:', err);
     renderJobs.set(jobId, { status: 'error', error: err.message, projectId: req.params.projectId });
@@ -77,77 +75,75 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   fs.mkdirSync(tmpDir, { recursive: true });
 
   try {
-    // Phase 1: Prepare local image paths
+    // Phase 1: Resolve image and video paths for each scene
     const scenePaths = [];
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
+
+      // -- Image path resolution (re-resolve filename against IMAGES_DIR for Railway restarts) --
+      const rawUrl = scene.image_url || '';
+      const rawPath = scene.image_path || '';
       let imgPath = null;
 
-      // Resolve image path: extract filename from image_url or image_path and re-resolve
-      // against IMAGES_DIR. This handles cases where the stored absolute path is stale
-      // (e.g. after a container restart on Railway).
-      const rawPath = scene.image_path || '';
-      const rawUrl = scene.image_url || '';
-      let filename = null;
-      if (rawUrl) {
-        // image_url = /api/generate/image-file/img-xxx.jpg
-        filename = path.basename(rawUrl);
-      } else if (rawPath) {
-        filename = path.basename(rawPath);
-      }
-
-      if (filename) {
-        const resolvedPath = path.join(IMAGES_DIR, filename);
-        const resolvedExists = fs.existsSync(resolvedPath);
-        console.log(`[render] Scene ${i + 1}: image_url="${rawUrl}" image_path="${rawPath}" resolved="${resolvedPath}" exists=${resolvedExists}`);
-        if (resolvedExists) {
-          imgPath = resolvedPath;
+      const imgFilename = rawUrl ? path.basename(rawUrl) : rawPath ? path.basename(rawPath) : null;
+      if (imgFilename) {
+        const resolved = path.join(IMAGES_DIR, imgFilename);
+        if (fs.existsSync(resolved)) {
+          imgPath = resolved;
         }
-      } else {
-        console.log(`[render] Scene ${i + 1}: no image_url or image_path set — using placeholder`);
       }
-
-      // Fallback: try stored absolute path directly (backward compat)
       if (!imgPath && rawPath && fs.existsSync(rawPath)) {
-        console.log(`[render] Scene ${i + 1}: resolved path missing, falling back to stored image_path`);
         imgPath = rawPath;
       }
-
       if (!imgPath) {
-        console.log(`[render] Scene ${i + 1}: image not found, using placeholder`);
         imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
       }
 
-      if (!imgPath || !fs.existsSync(imgPath)) {
-        // Genuine fallback — no image available
-        imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
+      // -- Video path resolution (Veo clips) --
+      // Re-resolve against VIDEOS_DIR in case stored absolute path is stale
+      let videoPath = null;
+      const rawVideoUrl = scene.video_url || '';
+      const rawVideoPath = scene.video_path || '';
+      const vidFilename = rawVideoUrl ? path.basename(rawVideoUrl) : rawVideoPath ? path.basename(rawVideoPath) : null;
+      if (vidFilename) {
+        const resolved = path.join(VIDEOS_DIR, vidFilename);
+        if (fs.existsSync(resolved)) {
+          videoPath = resolved;
+        }
       }
-      // Calculate clip duration from absolute timestamps so images align with the audio track.
-      // Scene 0: covers 0s → scene0.end_time (includes any pre-roll silence)
-      // Scene i: covers scenes[i-1].end_time → scenes[i].end_time (includes inter-scene gaps)
+      if (!videoPath && rawVideoPath && fs.existsSync(rawVideoPath)) {
+        videoPath = rawVideoPath;
+      }
+
       const prevEndTime = i > 0 ? (scenes[i - 1].end_time || 0) : 0;
       const clipDuration = Math.max((scene.end_time || (prevEndTime + 5)) - prevEndTime, 0.5);
-      scenePaths.push({ path: imgPath, duration: clipDuration });
+
+      console.log(`[render] Scene ${i + 1}: img="${imgFilename}" video="${vidFilename || 'none'}" dur=${clipDuration.toFixed(2)}s`);
+      scenePaths.push({ imgPath, videoPath, duration: clipDuration });
       renderJobs.get(jobId).progress = Math.round((i / scenes.length) * 10);
     }
 
-    // Phase 2: Encode each scene into its own clip (one at a time to stay within memory limits)
+    // Phase 2: Encode each scene into its own clip
     const FPS = 25;
     const slowPan = project.slow_pan === 1 || project.slow_pan === true;
     const clipPaths = [];
 
     for (let i = 0; i < scenePaths.length; i++) {
-      const { path: imgPath, duration: dur } = scenePaths[i];
+      const { imgPath, videoPath, duration: dur } = scenePaths[i];
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
-      const filter = slowPan
-        ? buildPanFilter(dur, i, FPS)
-        : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
-
-      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding (${dur.toFixed(2)}s)...`);
+      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: ${videoPath ? 'trimming Veo clip' : 'encoding image'} (${dur.toFixed(2)}s)...`);
 
       try {
-        await renderSceneClip(imgPath, clipPath, filter, dur);
+        if (videoPath) {
+          // Use the Veo-generated video clip, trimmed/looped to exact scene duration
+          await renderVeoClip(videoPath, clipPath, dur);
+        } else {
+          const filter = slowPan
+            ? buildPanFilter(dur, i, FPS)
+            : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
+          await renderSceneClip(imgPath, clipPath, filter, dur);
+        }
         clipPaths.push(clipPath);
         console.log(`[render ${jobId}] Scene ${i + 1} complete.`);
       } catch (err) {
@@ -161,23 +157,18 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
       throw new Error('All scenes failed to encode — no clips to assemble');
     }
 
-    // Phase 3: Write concat list and join clips (stream copy — nearly instant, no memory spike)
+    // Phase 3: Concatenate clips
     const concatFile = path.join(tmpDir, 'concat.txt');
-    fs.writeFileSync(
-      concatFile,
-      clipPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n')
-    );
-
-    console.log(`[render ${jobId}] Concatenating ${clipPaths.length} clips via concat demuxer...`);
+    fs.writeFileSync(concatFile, clipPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n'));
+    console.log(`[render ${jobId}] Concatenating ${clipPaths.length} clips...`);
     renderJobs.get(jobId).progress = 85;
 
     const videoOnlyPath = path.join(tmpDir, 'video_only.mp4');
     await concatClips(concatFile, videoOnlyPath);
 
-    // Phase 4: Mux audio into final output
+    // Phase 4: Mux audio
     console.log(`[render ${jobId}] Muxing audio...`);
     renderJobs.get(jobId).progress = 93;
-
     await muxAudio(videoOnlyPath, audioPath, outputPath);
 
     console.log(`[render ${jobId}] Render complete -> ${outputPath}`);
@@ -187,33 +178,24 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     ).run('complete', outputPath, project.id);
 
   } finally {
-    // Clean up tmp dir (includes individual scene clips)
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 }
 
-// Build a subtle slow-pan filter for a scene.
-// Scales the image 8% larger than 1920x1080 to create panning room, then
-// slowly crops across it using a linear time expression. Direction cycles
-// through 4 orientations per scene so consecutive scenes pan differently.
-// Avoids zoompan (which causes frame-timing glitches).
+// Build slow-pan (Ken Burns) filter for static images
 function buildPanFilter(dur, sceneIndex, FPS) {
-  const W = 2080, H = 1170;   // 8.3% larger than 1920×1080
-  const maxX = W - 1920;      // 160px horizontal room
-  const maxY = H - 1080;      // 90px vertical room
+  const W = 2080, H = 1170;
+  const maxX = W - 1920;
+  const maxY = H - 1080;
   const cx = Math.round(maxX / 2);
   const cy = Math.round(maxY / 2);
 
   let cropX, cropY;
   switch (sceneIndex % 4) {
-    case 0: // left → right
-      cropX = `trunc(min(t/${dur},1)*${maxX})`; cropY = String(cy); break;
-    case 1: // right → left
-      cropX = `trunc((1-min(t/${dur},1))*${maxX})`; cropY = String(cy); break;
-    case 2: // top → bottom
-      cropX = String(cx); cropY = `trunc(min(t/${dur},1)*${maxY})`; break;
-    default: // bottom → top
-      cropX = String(cx); cropY = `trunc((1-min(t/${dur},1))*${maxY})`; break;
+    case 0: cropX = `trunc(min(t/${dur},1)*${maxX})`; cropY = String(cy); break;
+    case 1: cropX = `trunc((1-min(t/${dur},1))*${maxX})`; cropY = String(cy); break;
+    case 2: cropX = String(cx); cropY = `trunc(min(t/${dur},1)*${maxY})`; break;
+    default: cropX = String(cx); cropY = `trunc((1-min(t/${dur},1))*${maxY})`; break;
   }
 
   return (
@@ -224,7 +206,7 @@ function buildPanFilter(dur, sceneIndex, FPS) {
   );
 }
 
-// Encode a single image into a static video clip
+// Encode static image into a video clip
 function renderSceneClip(imgPath, clipPath, filter, duration) {
   return new Promise((resolve, reject) => {
     ffmpeg()
@@ -249,7 +231,28 @@ function renderSceneClip(imgPath, clipPath, filter, duration) {
   });
 }
 
-// Join clip files using concat demuxer (stream copy — no re-encode, minimal memory)
+// Trim (and loop if needed) a Veo video clip to the exact scene duration
+function renderVeoClip(inputPath, outputPath, duration) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(inputPath)
+      .inputOptions(['-stream_loop', '-1'])  // loop if clip is shorter than scene
+      .outputOptions([
+        '-t', String(duration),
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '26',
+        '-threads', '1',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+      ])
+      .output(outputPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+}
+
 function concatClips(concatFile, videoOnlyPath) {
   return new Promise((resolve, reject) => {
     ffmpeg()
@@ -263,7 +266,6 @@ function concatClips(concatFile, videoOnlyPath) {
   });
 }
 
-// Mux video + audio into the final output file
 function muxAudio(videoOnlyPath, audioPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg()
