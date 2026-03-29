@@ -231,9 +231,8 @@ export default function Settings() {
         </Section>
 
         <Section title="Prompt Generation — Gemini">
-          <ApiKeyField label="Gemini API Key (optional)" keyName="gemini_api_key" values={values} onChange={onChange} hint="AIza... (optional)" />
           <p className="text-xs text-gray-500">
-            Used by Gemini 2.0 Flash to auto-generate vivid image prompts from scene text. If omitted, scene text is used directly as the prompt.
+            Image prompts are auto-generated using the same Bearer token used for image generation. No separate API key needed.
           </p>
         </Section>
 

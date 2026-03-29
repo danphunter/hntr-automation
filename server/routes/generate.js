@@ -197,23 +197,14 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
-  const settings = getSettings(db);
-  const apiKey = settings.gemini_api_key?.trim() || process.env.GEMINI_API_KEY?.trim();
+
+  const wt = getNextToken(db);
+  if (!wt) return res.status(429).json({ error: 'No active Bearer tokens — add a token in Settings' });
 
   let styleContext = '';
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) styleContext = `Visual style: ${style.name}. ${style.description}`;
-  }
-
-  if (!apiKey) {
-    const updated = scenes.map(scene => {
-      const stylePrefix = styleContext ? `${styleContext}, ` : '';
-      const prompt = `${stylePrefix}cinematic scene, dramatic lighting, high detail, photorealistic, 16:9 widescreen, no text, no words`;
-      db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
-      return { id: scene.id, image_prompt: prompt };
-    });
-    return res.json({ scenes: updated, demo: true });
   }
 
   const systemPrompt = [
@@ -240,15 +231,19 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
         contents: [{ parts: [{ text: `${systemPrompt}\n\nNarration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.` }] }],
       };
       const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+        'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${wt.token.trim()}` },
+          body: JSON.stringify(body),
+        }
       );
       const data = await resp.json();
       if (!resp.ok) {
         const errMsg = data?.error?.message || resp.statusText;
         if (i === 0) {
-          console.error('[prompts] Gemini REST error on first scene:', errMsg);
-          return res.status(400).json({ error: `Gemini API error: ${errMsg}` });
+          console.error('[prompts] Gemini error on first scene:', errMsg);
+          return res.status(400).json({ error: `Gemini prompt error: ${errMsg}` });
         }
         console.warn(`[prompts] Gemini error for scene ${scene.id}, falling back to scene text:`, errMsg);
       } else {
@@ -257,14 +252,14 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     } catch (err) {
       if (i === 0) {
         console.error('[prompts] Gemini fetch failed on first scene:', err.message);
-        return res.status(400).json({ error: `Gemini API error: ${err.message}` });
+        return res.status(400).json({ error: `Gemini prompt error: ${err.message}` });
       }
       console.warn(`[prompts] Gemini fetch failed for scene ${scene.id}, falling back to scene text:`, err.message);
     }
     db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
     updated.push({ id: scene.id, image_prompt: prompt });
   }
-  res.json({ scenes: updated, demo: false });
+  res.json({ scenes: updated });
 });
 
 // -- Bearer token management ---------------------------------------------------
