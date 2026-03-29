@@ -198,6 +198,8 @@ export default function ProjectDetail() {
   // Step 5
   const [renderProgress, setRenderProgress] = useState(null);
   const [usePlaceholders, setUsePlaceholders] = useState(false);
+  const [scenePatternType, setScenePatternType] = useState('all_image');
+  const [scenePatternN, setScenePatternN] = useState(10);
   const pollRef = useRef(null);
 
   // Lightbox
@@ -222,6 +224,8 @@ export default function ProjectDetail() {
         setProject(proj);
         setScenes(scns);
         setEditTitle(proj.title || '');
+        setScenePatternType(proj.scene_pattern_type || 'all_image');
+        setScenePatternN(proj.scene_pattern_n || 10);
         // style_id may be null for older projects - fall back to matching by style name
         const styleId = proj.style_id
           ? String(proj.style_id)
@@ -399,9 +403,6 @@ export default function ProjectDetail() {
         }
       }
 
-      const flowConfig = await api.getFlowConfig();
-      const veoEnabled = flowConfig.veoEnabled;
-
       // Generate images for pending scenes
       const pending = workingScenes.filter(s => s.status !== 'generated');
       setGenProgress({ current: 0, total: pending.length });
@@ -415,23 +416,6 @@ export default function ProjectDetail() {
           setScenes(prev => prev.map(s =>
             s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
           ));
-
-          // Animate with Veo if enabled (each clip ~1–3 min — runs synchronously per scene)
-          if (veoEnabled) {
-            setGeneratingId(null);
-            setAnimatingId(scene.id);
-            try {
-              const vidResult = await api.generateVideo(scene.id);
-              setScenes(prev => prev.map(s =>
-                s.id === scene.id ? { ...s, video_url: vidResult.video_url, video_status: 'generated' } : s
-              ));
-            } catch (vidErr) {
-              console.warn(`Scene ${(scene.scene_order ?? i) + 1} Veo failed, continuing:`, vidErr.message);
-            } finally {
-              setAnimatingId(null);
-            }
-            setGeneratingId(scene.id); // restore for progress display continuity
-          }
         } catch (err) {
           setError(`Scene ${(scene.scene_order ?? i) + 1}: ${err.message}`);
         }
@@ -452,23 +436,6 @@ export default function ProjectDetail() {
       setScenes(prev => prev.map(s =>
         s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated', video_url: null, video_status: 'pending' } : s
       ));
-
-      // Re-animate if Veo is enabled
-      const flowConfig = await api.getFlowConfig();
-      if (flowConfig.veoEnabled) {
-        setGeneratingId(null);
-        setAnimatingId(sceneId);
-        try {
-          const vidResult = await api.generateVideo(sceneId);
-          setScenes(prev => prev.map(s =>
-            s.id === sceneId ? { ...s, video_url: vidResult.video_url, video_status: 'generated' } : s
-          ));
-        } catch (vidErr) {
-          console.warn('Veo re-animation failed:', vidErr.message);
-        } finally {
-          setAnimatingId(null);
-        }
-      }
     } catch (err) { setError(err.message); }
     finally { setGeneratingId(null); }
   }
@@ -478,6 +445,7 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
+      await api.updateProject(id, { scene_pattern_type: scenePatternType, scene_pattern_n: scenePatternN });
       const result = await api.startRender(id, usePlaceholders);
       setRenderProgress({ status: 'processing', progress: 0 });
 
@@ -868,6 +836,75 @@ export default function ProjectDetail() {
             </div>
           </div>
 
+          {/* Scene pattern / Veo animation */}
+          <div className="card p-4 space-y-3">
+            <div className="text-sm font-medium text-gray-300">Veo Animation Pattern</div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {[
+                { value: 'all_image', label: 'All Images', desc: 'No Veo — Ken Burns effect' },
+                { value: 'all_video', label: 'All Video', desc: 'Animate every scene' },
+                { value: 'alternating', label: 'Alternating', desc: 'Image, Video, Image, Video…' },
+                { value: '2_image_1_video', label: '2 + 1 Loop', desc: 'Image, Image, Video…' },
+                { value: 'first_n_video', label: 'First N Video', desc: 'First N scenes animated' },
+                { value: 'custom', label: 'Custom', desc: 'Toggle per scene below' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setScenePatternType(opt.value)}
+                  className={`text-left p-2.5 rounded-lg border transition-colors ${
+                    scenePatternType === opt.value
+                      ? 'border-indigo-500 bg-indigo-900/30 text-white'
+                      : 'border-gray-700 bg-gray-800/40 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  <div className="font-medium">{opt.label}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+            {scenePatternType === 'first_n_video' && (
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-gray-400 whitespace-nowrap">Animate first</label>
+                <input
+                  type="number"
+                  min="1"
+                  max={scenes.length}
+                  value={scenePatternN}
+                  onChange={e => setScenePatternN(Math.max(1, Math.min(scenes.length, Number(e.target.value))))}
+                  className="input w-20 text-sm text-center"
+                />
+                <span className="text-sm text-gray-400">scene(s)</span>
+              </div>
+            )}
+            {scenePatternType === 'custom' && (
+              <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                {scenes.map((scene, i) => (
+                  <label key={scene.id} className="flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={!!scene.use_veo}
+                      onChange={async e => {
+                        const updated = scenes.map(s => s.id === scene.id ? { ...s, use_veo: e.target.checked ? 1 : 0 } : s);
+                        setScenes(updated);
+                        await api.updateScene(id, scene.id, { use_veo: e.target.checked ? 1 : 0 });
+                      }}
+                      className="accent-indigo-500"
+                    />
+                    <span>Scene {i + 1}</span>
+                    <span className="text-gray-600 truncate">{scene.text?.slice(0, 50)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {scenePatternType !== 'all_image' && (
+              <p className="text-xs text-gray-600">
+                Veo animates scenes during rendering (~1–3 min per clip). Requires Gemini API keys with Veo access.
+                Falls back to Ken Burns if a clip fails.
+              </p>
+            )}
+          </div>
+
           {/* Placeholder toggle when some images are missing */}
           {imagesReady < scenes.length && (
             <label className="card p-3 flex items-center gap-3 cursor-pointer hover:border-gray-700 transition-colors">
@@ -889,7 +926,7 @@ export default function ProjectDetail() {
           {renderProgress && (
             <div className="card p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-300 capitalize">{renderProgress.status}</span>
+                <span className="text-sm font-medium text-gray-300 capitalize">{renderProgress.message || renderProgress.status}</span>
                 <span className="text-sm text-indigo-400">{renderProgress.progress}%</span>
               </div>
               <div className="w-full bg-gray-800 rounded-full h-2.5">

@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
+const { getNextToken, markTokenUsed, markTokenRateLimited, generateViaVeo, applyScenePattern } = require('../utils/gemini');
 
 const router = express.Router();
 
@@ -13,6 +14,7 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
+if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
 // Track active render jobs
 const renderJobs = new Map();
@@ -58,7 +60,7 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   db.prepare('UPDATE projects SET status = ?, render_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run('rendering', req.params.projectId);
 
-  renderJobs.set(jobId, { status: 'processing', progress: 0, projectId: req.params.projectId });
+  renderJobs.set(jobId, { status: 'processing', progress: 0, message: 'Starting...', projectId: req.params.projectId });
 
   res.json({ jobId, message: 'Render started' });
 
@@ -74,6 +76,17 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   const tmpDir = path.join(RENDERS_DIR, `tmp-${jobId}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
+  const patternType = project.scene_pattern_type || 'all_image';
+  const patternN = project.scene_pattern_n || 10;
+  const slowPan = project.slow_pan === 1 || project.slow_pan === true;
+  const motionPrompt = slowPan
+    ? 'Cinematic slow camera pan across the scene, smooth parallax depth, atmospheric mood, photorealistic motion, no text'
+    : 'Gentle cinematic camera movement, subtle zoom and atmospheric motion, high quality, photorealistic, no text';
+
+  function setStatus(progress, message) {
+    renderJobs.set(jobId, { status: 'processing', progress, message, projectId: project.id });
+  }
+
   try {
     // Phase 1: Resolve image and video paths for each scene
     const scenePaths = [];
@@ -88,55 +101,108 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
       const imgFilename = rawUrl ? path.basename(rawUrl) : rawPath ? path.basename(rawPath) : null;
       if (imgFilename) {
         const resolved = path.join(IMAGES_DIR, imgFilename);
-        if (fs.existsSync(resolved)) {
-          imgPath = resolved;
-        }
+        if (fs.existsSync(resolved)) imgPath = resolved;
       }
-      if (!imgPath && rawPath && fs.existsSync(rawPath)) {
-        imgPath = rawPath;
-      }
-      if (!imgPath) {
-        imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
-      }
+      if (!imgPath && rawPath && fs.existsSync(rawPath)) imgPath = rawPath;
+      if (!imgPath) imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
 
-      // -- Video path resolution (Veo clips) --
-      // Re-resolve against VIDEOS_DIR in case stored absolute path is stale
+      // -- Video path resolution (Veo clips already generated) --
       let videoPath = null;
       const rawVideoUrl = scene.video_url || '';
       const rawVideoPath = scene.video_path || '';
       const vidFilename = rawVideoUrl ? path.basename(rawVideoUrl) : rawVideoPath ? path.basename(rawVideoPath) : null;
       if (vidFilename) {
         const resolved = path.join(VIDEOS_DIR, vidFilename);
-        if (fs.existsSync(resolved)) {
-          videoPath = resolved;
-        }
+        if (fs.existsSync(resolved)) videoPath = resolved;
       }
-      if (!videoPath && rawVideoPath && fs.existsSync(rawVideoPath)) {
-        videoPath = rawVideoPath;
-      }
+      if (!videoPath && rawVideoPath && fs.existsSync(rawVideoPath)) videoPath = rawVideoPath;
 
       const prevEndTime = i > 0 ? (scenes[i - 1].end_time || 0) : 0;
       const clipDuration = Math.max((scene.end_time || (prevEndTime + 5)) - prevEndTime, 0.5);
 
-      console.log(`[render] Scene ${i + 1}: img="${imgFilename}" video="${vidFilename || 'none'}" dur=${clipDuration.toFixed(2)}s`);
-      scenePaths.push({ imgPath, videoPath, duration: clipDuration });
-      renderJobs.get(jobId).progress = Math.round((i / scenes.length) * 10);
+      scenePaths.push({ scene, imgPath, videoPath, duration: clipDuration, sceneIndex: i });
+      setStatus(Math.round((i / scenes.length) * 10), `Resolving scene ${i + 1}/${scenes.length}...`);
+    }
+
+    // Phase 1.5: Generate missing Veo clips for scenes that need them (per pattern)
+    const needsVeo = scenePaths.filter(sp => {
+      if (sp.videoPath) return false; // already has a clip
+      if (!sp.imgPath) return false;  // no image to animate
+      return applyScenePattern(sp.sceneIndex, patternType, patternN, sp.scene.use_veo);
+    });
+
+    if (needsVeo.length > 0) {
+      console.log(`[render ${jobId}] Generating ${needsVeo.length} Veo clip(s) (pattern: ${patternType})...`);
+      setStatus(10, `Generating ${needsVeo.length} Veo animation(s)...`);
+
+      for (let vi = 0; vi < needsVeo.length; vi++) {
+        const sp = needsVeo[vi];
+        const sceneNum = sp.sceneIndex + 1;
+        setStatus(10 + Math.round((vi / needsVeo.length) * 30), `Animating scene ${sceneNum} with Veo (${vi + 1}/${needsVeo.length})...`);
+        console.log(`[render ${jobId}] Veo: scene ${sceneNum}...`);
+
+        let imageBuffer;
+        try {
+          imageBuffer = fs.readFileSync(sp.imgPath);
+        } catch (err) {
+          console.warn(`[render ${jobId}] Veo: could not read image for scene ${sceneNum}, skipping:`, err.message);
+          continue;
+        }
+
+        let videoBuffer = null;
+        let triedCount = 0;
+        while (true) {
+          const wt = getNextToken(db);
+          if (!wt) {
+            console.warn(`[render ${jobId}] Veo: no active API keys for scene ${sceneNum}, falling back to image`);
+            break;
+          }
+          triedCount++;
+          try {
+            const buf = await generateViaVeo(wt.token.trim(), imageBuffer, motionPrompt);
+            if (buf) { markTokenUsed(db, wt.id); videoBuffer = buf; break; }
+            markTokenRateLimited(db, wt.id, 'Empty Veo response');
+          } catch (err) {
+            if (err.message.startsWith('RATE_LIMITED')) {
+              markTokenRateLimited(db, wt.id, err.message.slice(12));
+              console.log(`[render ${jobId}] Key "${wt.label}" Veo rate-limited, rotating...`);
+            } else {
+              console.error(`[render ${jobId}] Key "${wt.label}" Veo error for scene ${sceneNum}:`, err.message);
+              break; // non-retryable — fall back to image
+            }
+          }
+          const total = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
+          if (triedCount >= total) break;
+        }
+
+        if (videoBuffer) {
+          const filename = `vid-${uuidv4()}.mp4`;
+          const vidPath = path.join(VIDEOS_DIR, filename);
+          fs.writeFileSync(vidPath, videoBuffer);
+          const localUrl = `/api/generate/video-file/${filename}`;
+          db.prepare('UPDATE scenes SET video_url = ?, video_path = ?, video_status = ? WHERE id = ?')
+            .run(localUrl, vidPath, 'generated', sp.scene.id);
+          sp.videoPath = vidPath;
+          console.log(`[render ${jobId}] Veo: scene ${sceneNum} done -> ${filename}`);
+        } else {
+          console.log(`[render ${jobId}] Veo: scene ${sceneNum} skipped — falling back to image+Ken Burns`);
+        }
+      }
     }
 
     // Phase 2: Encode each scene into its own clip
     const FPS = 25;
-    const slowPan = project.slow_pan === 1 || project.slow_pan === true;
     const clipPaths = [];
 
     for (let i = 0; i < scenePaths.length; i++) {
       const { imgPath, videoPath, duration: dur } = scenePaths[i];
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
+      setStatus(40 + Math.round((i / scenePaths.length) * 45), `Encoding scene ${i + 1}/${scenePaths.length}...`);
       console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: ${videoPath ? 'trimming Veo clip' : 'encoding image'} (${dur.toFixed(2)}s)...`);
 
       try {
         if (videoPath) {
-          // Use the Veo-generated video clip, trimmed/looped to exact scene duration
           await renderVeoClip(videoPath, clipPath, dur);
         } else {
           const filter = slowPan
@@ -145,12 +211,9 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
           await renderSceneClip(imgPath, clipPath, filter, dur);
         }
         clipPaths.push(clipPath);
-        console.log(`[render ${jobId}] Scene ${i + 1} complete.`);
       } catch (err) {
         console.error(`[render ${jobId}] Scene ${i + 1} failed, skipping:`, err.message);
       }
-
-      renderJobs.get(jobId).progress = Math.round(10 + ((i + 1) / scenePaths.length) * 70);
     }
 
     if (clipPaths.length === 0) {
@@ -160,19 +223,19 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     // Phase 3: Concatenate clips
     const concatFile = path.join(tmpDir, 'concat.txt');
     fs.writeFileSync(concatFile, clipPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n'));
+    setStatus(87, `Concatenating ${clipPaths.length} clips...`);
     console.log(`[render ${jobId}] Concatenating ${clipPaths.length} clips...`);
-    renderJobs.get(jobId).progress = 85;
 
     const videoOnlyPath = path.join(tmpDir, 'video_only.mp4');
     await concatClips(concatFile, videoOnlyPath);
 
     // Phase 4: Mux audio
+    setStatus(93, 'Muxing audio...');
     console.log(`[render ${jobId}] Muxing audio...`);
-    renderJobs.get(jobId).progress = 93;
     await muxAudio(videoOnlyPath, audioPath, outputPath);
 
     console.log(`[render ${jobId}] Render complete -> ${outputPath}`);
-    renderJobs.set(jobId, { status: 'complete', progress: 100, projectId: project.id, outputFilename });
+    renderJobs.set(jobId, { status: 'complete', progress: 100, message: 'Done!', projectId: project.id, outputFilename });
     db.prepare(
       'UPDATE projects SET status = ?, render_path = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
     ).run('complete', outputPath, project.id);
@@ -236,7 +299,7 @@ function renderVeoClip(inputPath, outputPath, duration) {
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(inputPath)
-      .inputOptions(['-stream_loop', '-1'])  // loop if clip is shorter than scene
+      .inputOptions(['-stream_loop', '-1'])
       .outputOptions([
         '-t', String(duration),
         '-c:v', 'libx264',

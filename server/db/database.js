@@ -155,6 +155,9 @@ function initDb() {
     "ALTER TABLE scenes ADD COLUMN video_url TEXT",
     "ALTER TABLE scenes ADD COLUMN video_path TEXT",
     "ALTER TABLE scenes ADD COLUMN video_status TEXT DEFAULT 'pending'",
+    "ALTER TABLE projects ADD COLUMN scene_pattern_type TEXT DEFAULT 'all_image'",
+    "ALTER TABLE projects ADD COLUMN scene_pattern_n INTEGER DEFAULT 10",
+    "ALTER TABLE scenes ADD COLUMN use_veo INTEGER DEFAULT 0",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}

@@ -91,7 +91,7 @@ router.put('/:id', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const { title, script, style, style_id, status, notes, assigned_to } = req.body;
+  const { title, script, style, style_id, status, notes, assigned_to, scene_pattern_type, scene_pattern_n } = req.body;
   db.prepare(`
     UPDATE projects SET
       title = COALESCE(?, title),
@@ -101,9 +101,11 @@ router.put('/:id', authMiddleware, (req, res) => {
       status = COALESCE(?, status),
       notes = COALESCE(?, notes),
       assigned_to = COALESCE(?, assigned_to),
+      scene_pattern_type = COALESCE(?, scene_pattern_type),
+      scene_pattern_n = COALESCE(?, scene_pattern_n),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(title, script, style, style_id ?? null, status, notes, assigned_to, req.params.id);
+  `).run(title, script, style, style_id ?? null, status, notes, assigned_to, scene_pattern_type ?? null, scene_pattern_n ?? null, req.params.id);
 
   const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   res.json(updated);
@@ -362,7 +364,7 @@ router.post('/:id/scenes', authMiddleware, (req, res) => {
 // PUT /api/projects/:id/scenes/:sceneId
 router.put('/:id/scenes/:sceneId', authMiddleware, (req, res) => {
   const db = getDb();
-  const { text, start_time, end_time, duration, image_prompt, image_url, status } = req.body;
+  const { text, start_time, end_time, duration, image_prompt, image_url, status, use_veo } = req.body;
   db.prepare(`
     UPDATE scenes SET
       text = COALESCE(?, text),
@@ -371,9 +373,10 @@ router.put('/:id/scenes/:sceneId', authMiddleware, (req, res) => {
       duration = COALESCE(?, duration),
       image_prompt = COALESCE(?, image_prompt),
       image_url = COALESCE(?, image_url),
-      status = COALESCE(?, status)
+      status = COALESCE(?, status),
+      use_veo = COALESCE(?, use_veo)
     WHERE id = ? AND project_id = ?
-  `).run(text, start_time, end_time, duration, image_prompt, image_url, status, req.params.sceneId, req.params.id);
+  `).run(text, start_time, end_time, duration, image_prompt, image_url, status, use_veo ?? null, req.params.sceneId, req.params.id);
 
   const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
   res.json(scene);
