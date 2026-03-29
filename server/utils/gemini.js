@@ -35,14 +35,14 @@ function markTokenRateLimited(db, tokenId, errMsg) {
 
 // -- Imagen 3 image generation ------------------------------------------------
 
-async function generateViaGemini(apiKey, prompt) {
+async function generateViaGemini(bearerToken, prompt) {
   const fetch = (await import('node-fetch')).default;
 
   const res = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearerToken}` },
       body: JSON.stringify({ instances: [{ prompt }], parameters: { sampleCount: 1, aspectRatio: '16:9' } }),
     }
   );
@@ -68,24 +68,50 @@ async function generateViaGemini(apiKey, prompt) {
   return Buffer.from(encoded, 'base64');
 }
 
-// -- Veo 2 image-to-video generation ------------------------------------------
-// Starts a predictLongRunning operation and polls until complete.
+// -- Veo video generation via aisandbox-pa.googleapis.com ---------------------
+// Endpoint confirmed by Dan from Flow network tab:
+//   POST https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText
+//
+// NOTE: The exact request body structure and polling/retrieval fields are not yet
+// fully confirmed. The implementation below is inferred from the Whisk/Flow image
+// generation pattern. Dan should capture one successful request/response from Flow's
+// network tab to verify: (1) exact body field names, (2) polling endpoint URL,
+// (3) done/status field name, and (4) video data location in the final response.
 
-async function generateViaVeo(apiKey, imageBuffer, motionPrompt) {
+async function generateViaVeo(bearerToken, imageBuffer, motionPrompt) {
   const fetch = (await import('node-fetch')).default;
 
+  // Inferred body structure — Dan should verify against actual Flow network traffic
+  const body = {
+    clientContext: {
+      sessionId: `;${Date.now()}`,
+    },
+    requests: [{
+      prompt: motionPrompt,
+      image: {
+        bytesBase64Encoded: imageBuffer.toString('base64'),
+        mimeType: 'image/jpeg',
+      },
+      parameters: {
+        aspectRatio: '16:9',
+        durationSeconds: 8,
+        sampleCount: 1,
+      },
+    }],
+  };
+
   const startRes = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning',
+    'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText',
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        instances: [{
-          prompt: motionPrompt,
-          image: { bytesBase64Encoded: imageBuffer.toString('base64'), mimeType: 'image/jpeg' },
-        }],
-        parameters: { aspectRatio: '16:9', durationSeconds: 8, sampleCount: 1 },
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${bearerToken}`,
+        'origin': 'https://labs.google',
+        'referer': 'https://labs.google/',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      body: JSON.stringify(body),
     }
   );
 
@@ -101,22 +127,35 @@ async function generateViaVeo(apiKey, imageBuffer, motionPrompt) {
     throw new Error(`VEO_ERROR:${startRes.status}:${text.slice(0, 200)}`);
   }
 
-  const operation = await startRes.json();
-  const operationName = operation.name;
-  if (!operationName) {
-    console.log('[veo] Start response (no operation name):', JSON.stringify(operation).slice(0, 500));
-    throw new Error('VEO_ERROR: No operation name in response');
-  }
-  console.log('[veo] Operation started:', operationName);
+  const startData = await startRes.json();
+  console.log('[veo] Job start response:', JSON.stringify(startData).slice(0, 500));
 
-  // Poll every 10s, max 15 minutes
+  // Try common operation ID field names — verify from actual response
+  const operationId = startData.operationId || startData.name || startData.jobId
+    || startData.operations?.[0]?.name || startData.id;
+
+  if (!operationId) {
+    throw new Error('VEO_ERROR: No operation ID in response — check server logs for response shape');
+  }
+  console.log('[veo] Job started:', operationId);
+
+  // Poll every 10s, max 15 minutes (90 polls)
+  // Polling URL: if operationId looks like a full path, use it directly; otherwise prefix host
   for (let i = 0; i < 90; i++) {
     await new Promise(r => setTimeout(r, 10000));
 
-    const pollRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/${operationName}`,
-      { headers: { 'x-goog-api-key': apiKey } }
-    );
+    const pollUrl = String(operationId).startsWith('http')
+      ? operationId
+      : `https://aisandbox-pa.googleapis.com/v1/${operationId}`;
+
+    const pollRes = await fetch(pollUrl, {
+      headers: {
+        'Authorization': `Bearer ${bearerToken}`,
+        'origin': 'https://labs.google',
+        'referer': 'https://labs.google/',
+      },
+    });
+
     if (!pollRes.ok) {
       const text = await pollRes.text();
       throw new Error(`VEO_POLL_ERROR:${pollRes.status}:${text.slice(0, 200)}`);
@@ -124,29 +163,48 @@ async function generateViaVeo(apiKey, imageBuffer, motionPrompt) {
 
     const status = await pollRes.json();
     if (status.error) throw new Error(`VEO_ERROR:${JSON.stringify(status.error).slice(0, 200)}`);
-    if (!status.done) { console.log(`[veo] Poll ${i + 1}/90: running...`); continue; }
 
-    console.log('[veo] Operation complete, extracting video...');
-    const resp = status.response || {};
+    // Check for completion — verify field name from actual polling response
+    const isDone = status.done === true
+      || status.status === 'COMPLETE'
+      || status.status === 'SUCCEEDED'
+      || status.state === 'DONE';
 
-    // Shape A: { generateVideoResponse: { generatedSamples: [{ video: { ... } }] } }
-    const samples = resp.generateVideoResponse?.generatedSamples || resp.generatedSamples;
+    if (!isDone) {
+      console.log(`[veo] Poll ${i + 1}/90: running... state=${status.status || status.state || status.done}`);
+      continue;
+    }
+
+    console.log('[veo] Job complete, extracting video...');
+    // Log full response on first success so Dan can verify/tighten the extraction below
+    console.log('[veo] Full done response:', JSON.stringify(status).slice(0, 1000));
+
+    const resp = status.response || status;
+
+    // Try various response shapes — tighten once actual shape is confirmed
+    const samples = resp.generateVideoResponse?.generatedSamples
+      || resp.generatedSamples
+      || resp.videos
+      || resp.media;
+
     if (samples?.length > 0) {
       const video = samples[0].video || samples[0];
       if (video.bytesBase64Encoded) return Buffer.from(video.bytesBase64Encoded, 'base64');
-      if (video.uri) {
-        const dl = await fetch(video.uri, { headers: { 'x-goog-api-key': apiKey } });
-        if (!dl.ok) throw new Error(`VEO_ERROR: Failed to download video URI: ${dl.status}`);
+      const videoUrl = video.uri || video.videoUri || video.url || video.downloadUri;
+      if (videoUrl) {
+        const dl = await fetch(videoUrl, { headers: { 'Authorization': `Bearer ${bearerToken}` } });
+        if (!dl.ok) throw new Error(`VEO_ERROR: Failed to download video: ${dl.status}`);
         return await dl.buffer();
       }
     }
-    // Shape B: { predictions: [{ bytesBase64Encoded | videoUri }] }
-    const preds = resp.predictions;
+
+    const preds = resp.predictions || resp.results;
     if (preds?.length > 0) {
       if (preds[0].bytesBase64Encoded) return Buffer.from(preds[0].bytesBase64Encoded, 'base64');
-      if (preds[0].videoUri) {
-        const dl = await fetch(preds[0].videoUri, { headers: { 'x-goog-api-key': apiKey } });
-        if (!dl.ok) throw new Error(`VEO_ERROR: Failed to download videoUri: ${dl.status}`);
+      const videoUrl = preds[0].videoUri || preds[0].uri || preds[0].url;
+      if (videoUrl) {
+        const dl = await fetch(videoUrl, { headers: { 'Authorization': `Bearer ${bearerToken}` } });
+        if (!dl.ok) throw new Error(`VEO_ERROR: Failed to download video: ${dl.status}`);
         return await dl.buffer();
       }
     }

@@ -49,12 +49,12 @@ export default function WhiskTokenBanner() {
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div>
               <p className={`font-semibold text-sm ${allExpired ? 'text-red-300' : 'text-yellow-300'}`}>
-                {allExpired ? 'All Gemini API keys rate-limited — image gen down' : `${expiredTokens.length} Gemini API key${expiredTokens.length > 1 ? 's' : ''} rate-limited`}
+                {allExpired ? 'All Bearer tokens rate-limited — image gen down' : `${expiredTokens.length} Bearer token${expiredTokens.length > 1 ? 's' : ''} rate-limited`}
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
                 {isAdmin
-                  ? 'Paste fresh API keys below, or add a new key from Google AI Studio (aistudio.google.com).'
-                  : 'Ask Dan to refresh the Gemini API keys in Settings.'}
+                  ? 'Paste fresh Bearer tokens below. Capture them from Flow\'s network tab (ya29.xxx) while logged into a Google account.'
+                  : 'Ask Dan to refresh the Bearer tokens in Settings.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -80,7 +80,7 @@ export default function WhiskTokenBanner() {
                   <div className="flex-shrink-0 w-24 text-xs text-gray-400 font-medium truncate" title={t.label}>{t.label}</div>
                   <input
                     className="input text-xs font-mono flex-1"
-                    placeholder="AIza… — paste fresh Gemini API key"
+                    placeholder="ya29.xxx — paste fresh Bearer token"
                     value={updates[t.id] || ''}
                     onChange={e => setUpdates(u => ({ ...u, [t.id]: e.target.value }))}
                   />

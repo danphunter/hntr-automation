@@ -107,11 +107,11 @@ function GeminiKeysSection() {
   }[s] || 'text-gray-500 bg-gray-800');
 
   return (
-    <Section title="Image Generation — Gemini API Keys">
+    <Section title="Image Generation — Bearer Tokens">
       <p className="text-sm text-gray-500">
-        Gemini API keys (AIza...) from Google AI Studio. The app tries each active key in order,
-        rotating when one hits its rate limit. Add multiple keys from different Google accounts
-        for higher throughput.
+        Bearer tokens (ya29.xxx) captured from Flow's network tab while logged into a Google account.
+        The app rotates through active tokens, marking each rate-limited when it fails.
+        Add tokens from multiple Google accounts for higher throughput.
       </p>
 
       {loading ? (
@@ -119,7 +119,7 @@ function GeminiKeysSection() {
       ) : (
         <div className="space-y-2">
           {tokens.length === 0 && (
-            <p className="text-sm text-gray-600 italic">No API keys added yet. Add your first Gemini API key below.</p>
+            <p className="text-sm text-gray-600 italic">No tokens added yet. Add your first Bearer token below.</p>
           )}
           {tokens.map(t => (
             <div key={t.id} className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
@@ -145,7 +145,7 @@ function GeminiKeysSection() {
               <div className="flex gap-2">
                 <input
                   className="input text-xs font-mono flex-1"
-                  placeholder="Paste replacement key (AIza…)"
+                  placeholder="Paste replacement token (ya29.xxx)"
                   value={editToken[t.id] || ''}
                   onChange={e => setEditToken(tok => ({ ...tok, [t.id]: e.target.value }))}
                 />
@@ -167,7 +167,7 @@ function GeminiKeysSection() {
         <h3 className="text-sm font-medium text-gray-400">Add New Key</h3>
         <div className="grid grid-cols-2 gap-2">
           <input className="input text-sm" placeholder='Label (e.g. "Account 2")' value={newLabel} onChange={e => setNewLabel(e.target.value)} />
-          <input className="input text-sm font-mono" placeholder="AIza… Gemini API key" value={newToken} onChange={e => setNewToken(e.target.value)} />
+          <input className="input text-sm font-mono" placeholder="ya29.xxx Bearer token" value={newToken} onChange={e => setNewToken(e.target.value)} />
         </div>
         <button type="submit" disabled={adding || !newLabel.trim() || !newToken.trim()} className="btn-primary flex items-center gap-2 text-sm">
           {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Key

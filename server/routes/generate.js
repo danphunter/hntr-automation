@@ -13,9 +13,8 @@ const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
-// Legacy constants kept for backward compatibility with existing whisk/flow provider settings
 const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
-const FLOW_PROJECT_ID_DEFAULT = '0b18c780-3509-4d6e-84c6-dc4528e2b92b';
+const FLOW_PROJECT_ID_DEFAULT = 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
 
 function getSettings(db) {
   const rows = db.prepare('SELECT key, value FROM settings').all();
@@ -187,7 +186,7 @@ router.get('/flow-config', authMiddleware, (req, res) => {
   const db = getDb();
   const settings = getSettings(db);
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT || null;
-  const imageProvider = settings.image_provider || 'gemini';
+  const imageProvider = settings.image_provider || 'flow';
   const veoEnabled = settings.veo_enabled === 'true' || settings.veo_enabled === '1';
   const wt = getNextToken(db);
   res.json({
@@ -196,7 +195,7 @@ router.get('/flow-config', authMiddleware, (req, res) => {
     hasToken: !!wt,
     imageProvider,
     veoEnabled,
-    bearerToken: (imageProvider !== 'gemini' && wt?.token) ? wt.token : null,
+    bearerToken: wt?.token || null,
   });
 });
 
@@ -232,7 +231,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const settings = getSettings(db);
-  const imageProvider = settings.image_provider || 'gemini';
+  const imageProvider = settings.image_provider || 'flow';
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
   const { recaptchaToken } = req.body;
 
