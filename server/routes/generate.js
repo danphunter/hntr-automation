@@ -5,7 +5,6 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const { getNextToken, markTokenUsed, markTokenRateLimited } = require('../utils/gemini');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
@@ -230,25 +229,37 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     '- Return ONLY the image prompt, no explanation or preamble',
   ].filter(Boolean).join('\n');
 
-  const genAI = new GoogleGenerativeAI(apiKey, { apiVersion: 'v1' });
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+  const fetch = (await import('node-fetch')).default;
 
   const updated = [];
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     let prompt = scene.text;
     try {
-      const result = await model.generateContent(
-        `${systemPrompt}\n\nNarration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.`
+      const body = {
+        contents: [{ parts: [{ text: `${systemPrompt}\n\nNarration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.` }] }],
+      };
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${apiKey}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       );
-      prompt = result.response.text().trim() || scene.text;
+      const data = await resp.json();
+      if (!resp.ok) {
+        const errMsg = data?.error?.message || resp.statusText;
+        if (i === 0) {
+          console.error('[prompts] Gemini REST error on first scene:', errMsg);
+          return res.status(400).json({ error: `Gemini API error: ${errMsg}` });
+        }
+        console.warn(`[prompts] Gemini error for scene ${scene.id}, falling back to scene text:`, errMsg);
+      } else {
+        prompt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || scene.text;
+      }
     } catch (err) {
-      // First scene failure: surface the error so it's visible rather than silently falling back
       if (i === 0) {
-        console.error('[prompts] Gemini failed on first scene:', err.message);
+        console.error('[prompts] Gemini fetch failed on first scene:', err.message);
         return res.status(400).json({ error: `Gemini API error: ${err.message}` });
       }
-      console.warn(`[prompts] Gemini error for scene ${scene.id}, falling back to scene text:`, err.message);
+      console.warn(`[prompts] Gemini fetch failed for scene ${scene.id}, falling back to scene text:`, err.message);
     }
     db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
     updated.push({ id: scene.id, image_prompt: prompt });
