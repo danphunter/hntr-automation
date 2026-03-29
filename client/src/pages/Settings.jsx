@@ -230,10 +230,10 @@ export default function Settings() {
           </p>
         </Section>
 
-        <Section title="Prompt Generation — GPT-4o-mini">
-          <ApiKeyField label="OpenAI API Key (optional)" keyName="openai_api_key" values={values} onChange={onChange} hint="sk-... (optional)" />
+        <Section title="Prompt Generation — Gemini">
+          <ApiKeyField label="Gemini API Key (optional)" keyName="gemini_api_key" values={values} onChange={onChange} hint="AIza... (optional)" />
           <p className="text-xs text-gray-500">
-            Used by GPT-4o-mini to auto-generate vivid image prompts from scene text. If omitted, basic prompts are generated without AI.
+            Used by Gemini 2.0 Flash to auto-generate vivid image prompts from scene text. If omitted, scene text is used directly as the prompt.
           </p>
         </Section>
 

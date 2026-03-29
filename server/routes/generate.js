@@ -198,7 +198,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
   const settings = getSettings(db);
-  const apiKey = settings.openai_api_key?.trim();
+  const apiKey = settings.gemini_api_key?.trim() || process.env.GEMINI_API_KEY?.trim();
 
   let styleContext = '';
   if (project.style_id) {
@@ -229,31 +229,20 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     '- Return ONLY the image prompt, no explanation or preamble',
   ].filter(Boolean).join('\n');
 
-  const fetch = (await import('node-fetch')).default;
+  const { GoogleGenerativeAI } = require('@google/generative-ai');
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
   const updated = [];
   for (const scene of scenes) {
     let prompt = scene.text;
     try {
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Narration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.` },
-          ],
-          max_tokens: 150,
-        }),
-      });
-      const data = await resp.json();
-      if (data.error) {
-        console.warn(`[prompts] OpenAI error for scene ${scene.id}, falling back to scene text:`, data.error.message || data.error.code);
-      } else {
-        prompt = data.choices?.[0]?.message?.content?.trim() || scene.text;
-      }
+      const result = await model.generateContent(
+        `${systemPrompt}\n\nNarration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.`
+      );
+      prompt = result.response.text().trim() || scene.text;
     } catch (err) {
-      console.warn(`[prompts] OpenAI fetch failed for scene ${scene.id}, falling back to scene text:`, err.message);
+      console.warn(`[prompts] Gemini error for scene ${scene.id}, falling back to scene text:`, err.message);
     }
     db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
     updated.push({ id: scene.id, image_prompt: prompt });
