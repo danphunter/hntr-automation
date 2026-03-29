@@ -1,4 +1,5 @@
-// Shared Gemini API utilities used by both generate.js and render.js
+// Shared API utilities used by both generate.js and render.js
+const { v4: uuidv4 } = require('uuid');
 
 // -- Token rotation (whisk_tokens table) --------------------------------------
 
@@ -69,35 +70,45 @@ async function generateViaGemini(bearerToken, prompt) {
 }
 
 // -- Veo video generation via aisandbox-pa.googleapis.com ---------------------
-// Endpoint confirmed by Dan from Flow network tab:
+// Confirmed endpoint (captured by Dan from Flow network tab):
 //   POST https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText
 //
-// NOTE: The exact request body structure and polling/retrieval fields are not yet
-// fully confirmed. The implementation below is inferred from the Whisk/Flow image
-// generation pattern. Dan should capture one successful request/response from Flow's
-// network tab to verify: (1) exact body field names, (2) polling endpoint URL,
-// (3) done/status field name, and (4) video data location in the final response.
+// Request body structure partially confirmed. Fields still needing verification
+// from Dan's network tab:
+//   - Image field name inside requests[] (guessing "image" with base64)
+//   - Prompt field name inside requests[] (guessing "structuredPrompt" matching Flow image gen)
+//   - Polling endpoint/method — TODO: capture status check request from network tab
+//   - Done condition field name in poll response
+//   - Video data location in final response
 
 async function generateViaVeo(bearerToken, imageBuffer, motionPrompt) {
   const fetch = (await import('node-fetch')).default;
+  const batchId = uuidv4();
 
-  // Inferred body structure — Dan should verify against actual Flow network traffic
+  // Request body — top-level structure confirmed; requests[] fields are inferred
   const body = {
+    mediaGenerationContext: {
+      batchId,
+    },
     clientContext: {
-      sessionId: `;${Date.now()}`,
+      projectId: 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077',
+      tool: 'PINHOLE',
     },
     requests: [{
-      prompt: motionPrompt,
+      aspectRatio: 'VIDEO_ASPECT_RATIO_PORTRAIT',
+      seed: Math.floor(Math.random() * 1000000),
+      // Image source — field name needs verification; "image" matches Flow image gen pattern
       image: {
         bytesBase64Encoded: imageBuffer.toString('base64'),
         mimeType: 'image/jpeg',
       },
-      parameters: {
-        aspectRatio: '16:9',
-        durationSeconds: 8,
-        sampleCount: 1,
+      // Prompt — "structuredPrompt" matches the Flow image gen request format
+      // TODO: Dan — verify this field name from the captured network request body
+      structuredPrompt: {
+        parts: [{ text: motionPrompt }],
       },
     }],
+    useV2ModelConfig: true,
   };
 
   const startRes = await fetch(
@@ -128,32 +139,32 @@ async function generateViaVeo(bearerToken, imageBuffer, motionPrompt) {
   }
 
   const startData = await startRes.json();
-  console.log('[veo] Job start response:', JSON.stringify(startData).slice(0, 500));
+  console.log('[veo] Job submitted (batchId=%s) response:', batchId, JSON.stringify(startData).slice(0, 500));
 
-  // Try common operation ID field names — verify from actual response
-  const operationId = startData.operationId || startData.name || startData.jobId
-    || startData.operations?.[0]?.name || startData.id;
+  // TODO: Capture the status-check request from Flow's network tab to confirm:
+  //   (a) The polling URL/method
+  //   (b) Whether it uses batchId or an operation ID from the start response
+  //   (c) The done-state field name
+  //
+  // Best guess: POST .../video:batchGetVideoStatus with { "batchIds": [batchId] }
+  // Polling every 10s, max 15 minutes (90 polls)
 
-  if (!operationId) {
-    throw new Error('VEO_ERROR: No operation ID in response — check server logs for response shape');
-  }
-  console.log('[veo] Job started:', operationId);
+  const POLL_URL = 'https://aisandbox-pa.googleapis.com/v1/video:batchGetVideoStatus';
+  const POLL_HEADERS = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${bearerToken}`,
+    'origin': 'https://labs.google',
+    'referer': 'https://labs.google/',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  };
 
-  // Poll every 10s, max 15 minutes (90 polls)
-  // Polling URL: if operationId looks like a full path, use it directly; otherwise prefix host
   for (let i = 0; i < 90; i++) {
     await new Promise(r => setTimeout(r, 10000));
 
-    const pollUrl = String(operationId).startsWith('http')
-      ? operationId
-      : `https://aisandbox-pa.googleapis.com/v1/${operationId}`;
-
-    const pollRes = await fetch(pollUrl, {
-      headers: {
-        'Authorization': `Bearer ${bearerToken}`,
-        'origin': 'https://labs.google',
-        'referer': 'https://labs.google/',
-      },
+    const pollRes = await fetch(POLL_URL, {
+      method: 'POST',
+      headers: POLL_HEADERS,
+      body: JSON.stringify({ batchIds: [batchId] }),
     });
 
     if (!pollRes.ok) {
@@ -161,49 +172,47 @@ async function generateViaVeo(bearerToken, imageBuffer, motionPrompt) {
       throw new Error(`VEO_POLL_ERROR:${pollRes.status}:${text.slice(0, 200)}`);
     }
 
-    const status = await pollRes.json();
-    if (status.error) throw new Error(`VEO_ERROR:${JSON.stringify(status.error).slice(0, 200)}`);
+    const pollData = await pollRes.json();
+    if (pollData.error) throw new Error(`VEO_ERROR:${JSON.stringify(pollData.error).slice(0, 200)}`);
 
-    // Check for completion — verify field name from actual polling response
-    const isDone = status.done === true
-      || status.status === 'COMPLETE'
-      || status.status === 'SUCCEEDED'
-      || status.state === 'DONE';
+    // Locate this batch in the poll response — try common shapes
+    const batchEntry = pollData.batches?.[0]
+      || pollData.results?.[0]
+      || pollData.statuses?.[0]
+      || pollData;
+
+    const isDone = batchEntry.done === true
+      || batchEntry.status === 'COMPLETE'
+      || batchEntry.status === 'SUCCEEDED'
+      || batchEntry.state === 'DONE'
+      || batchEntry.state === 'SUCCEEDED';
 
     if (!isDone) {
-      console.log(`[veo] Poll ${i + 1}/90: running... state=${status.status || status.state || status.done}`);
+      const state = batchEntry.status || batchEntry.state || batchEntry.done;
+      console.log(`[veo] Poll ${i + 1}/90: running... state=${state}`);
       continue;
     }
 
-    console.log('[veo] Job complete, extracting video...');
-    // Log full response on first success so Dan can verify/tighten the extraction below
-    console.log('[veo] Full done response:', JSON.stringify(status).slice(0, 1000));
+    console.log('[veo] Job complete. Full response:', JSON.stringify(pollData).slice(0, 1000));
 
-    const resp = status.response || status;
+    // Extract video — log the full shape above so Dan can tighten this once confirmed
+    const resp = batchEntry.response || batchEntry;
 
-    // Try various response shapes — tighten once actual shape is confirmed
-    const samples = resp.generateVideoResponse?.generatedSamples
-      || resp.generatedSamples
-      || resp.videos
-      || resp.media;
+    const candidates = [
+      ...(resp.videos || []),
+      ...(resp.media || []),
+      ...(resp.generatedSamples || []),
+      ...(resp.generateVideoResponse?.generatedSamples || []),
+      ...(resp.results || []),
+      ...(resp.predictions || []),
+    ];
 
-    if (samples?.length > 0) {
-      const video = samples[0].video || samples[0];
-      if (video.bytesBase64Encoded) return Buffer.from(video.bytesBase64Encoded, 'base64');
-      const videoUrl = video.uri || video.videoUri || video.url || video.downloadUri;
-      if (videoUrl) {
-        const dl = await fetch(videoUrl, { headers: { 'Authorization': `Bearer ${bearerToken}` } });
-        if (!dl.ok) throw new Error(`VEO_ERROR: Failed to download video: ${dl.status}`);
-        return await dl.buffer();
-      }
-    }
-
-    const preds = resp.predictions || resp.results;
-    if (preds?.length > 0) {
-      if (preds[0].bytesBase64Encoded) return Buffer.from(preds[0].bytesBase64Encoded, 'base64');
-      const videoUrl = preds[0].videoUri || preds[0].uri || preds[0].url;
-      if (videoUrl) {
-        const dl = await fetch(videoUrl, { headers: { 'Authorization': `Bearer ${bearerToken}` } });
+    for (const item of candidates) {
+      const vid = item.video || item;
+      if (vid.bytesBase64Encoded) return Buffer.from(vid.bytesBase64Encoded, 'base64');
+      const url = vid.uri || vid.videoUri || vid.url || vid.downloadUri || item.videoUri || item.uri;
+      if (url) {
+        const dl = await fetch(url, { headers: { 'Authorization': `Bearer ${bearerToken}` } });
         if (!dl.ok) throw new Error(`VEO_ERROR: Failed to download video: ${dl.status}`);
         return await dl.buffer();
       }
