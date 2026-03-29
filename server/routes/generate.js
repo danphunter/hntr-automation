@@ -230,8 +230,8 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     '- Return ONLY the image prompt, no explanation or preamble',
   ].filter(Boolean).join('\n');
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const genAI = new GoogleGenerativeAI(apiKey, { apiVersion: 'v1' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
   const updated = [];
   for (let i = 0; i < scenes.length; i++) {
