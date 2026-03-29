@@ -197,14 +197,21 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
-
-  const wt = getNextToken(db);
-  if (!wt) return res.status(429).json({ error: 'No active Bearer tokens — add a token in Settings' });
+  const settings = getSettings(db);
+  const apiKey = settings.openai_api_key?.trim() || process.env.OPENAI_API_KEY?.trim();
 
   let styleContext = '';
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) styleContext = `Visual style: ${style.name}. ${style.description}`;
+  }
+
+  if (!apiKey) {
+    const updated = scenes.map(scene => {
+      db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(scene.text, scene.id);
+      return { id: scene.id, image_prompt: scene.text };
+    });
+    return res.json({ scenes: updated });
   }
 
   const systemPrompt = [
@@ -223,38 +230,29 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const fetch = (await import('node-fetch')).default;
 
   const updated = [];
-  for (let i = 0; i < scenes.length; i++) {
-    const scene = scenes[i];
+  for (const scene of scenes) {
     let prompt = scene.text;
     try {
-      const body = {
-        contents: [{ parts: [{ text: `${systemPrompt}\n\nNarration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.` }] }],
-      };
-      const resp = await fetch(
-        'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${wt.token.trim()}` },
-          body: JSON.stringify(body),
-        }
-      );
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `Narration: "${scene.text}"\n\nWrite a visual image prompt for what should be shown on screen during this narration.` },
+          ],
+          max_tokens: 150,
+        }),
+      });
       const data = await resp.json();
-      if (!resp.ok) {
-        const errMsg = data?.error?.message || resp.statusText;
-        if (i === 0) {
-          console.error('[prompts] Gemini error on first scene:', errMsg);
-          return res.status(400).json({ error: `Gemini prompt error: ${errMsg}` });
-        }
-        console.warn(`[prompts] Gemini error for scene ${scene.id}, falling back to scene text:`, errMsg);
+      if (data.error) {
+        console.warn(`[prompts] OpenAI error for scene ${scene.id}, falling back to scene text:`, data.error.message || data.error.code);
       } else {
-        prompt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || scene.text;
+        prompt = data.choices?.[0]?.message?.content?.trim() || scene.text;
       }
     } catch (err) {
-      if (i === 0) {
-        console.error('[prompts] Gemini fetch failed on first scene:', err.message);
-        return res.status(400).json({ error: `Gemini prompt error: ${err.message}` });
-      }
-      console.warn(`[prompts] Gemini fetch failed for scene ${scene.id}, falling back to scene text:`, err.message);
+      console.warn(`[prompts] OpenAI fetch failed for scene ${scene.id}, falling back to scene text:`, err.message);
     }
     db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
     updated.push({ id: scene.id, image_prompt: prompt });
