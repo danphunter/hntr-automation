@@ -230,9 +230,10 @@ export default function Settings() {
           </p>
         </Section>
 
-        <Section title="Prompt Generation — Gemini">
+        <Section title="Prompt Generation — GPT-4o-mini">
+          <ApiKeyField label="OpenAI API Key (optional)" keyName="openai_api_key" values={values} onChange={onChange} hint="sk-... (optional)" />
           <p className="text-xs text-gray-500">
-            Image prompts are auto-generated using the same Bearer token used for image generation. No separate API key needed.
+            Used by GPT-4o-mini to auto-generate vivid image prompts from scene text. If omitted, basic prompts are generated without AI.
           </p>
         </Section>
 
