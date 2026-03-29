@@ -745,6 +745,27 @@ export default function ProjectDetail() {
             </div>
           )}
 
+          {/* Regenerate prompts button — forces re-run even if prompts already exist */}
+          {!generatingAll && !generatingPrompts && (
+            <button
+              onClick={async () => {
+                setGeneratingPrompts(true);
+                setError('');
+                try {
+                  const result = await api.generatePrompts(id);
+                  setScenes(prev => prev.map(s => {
+                    const found = result.scenes.find(r => r.id === s.id);
+                    return found ? { ...s, image_prompt: found.image_prompt } : s;
+                  }));
+                } catch (err) { setError(err.message); }
+                finally { setGeneratingPrompts(false); }
+              }}
+              className="btn-secondary text-sm flex items-center gap-2"
+            >
+              <RefreshCw size={13} /> Regenerate Prompts
+            </button>
+          )}
+
           {/* Resume button when generation was interrupted */}
           {!generatingAll && !generatingPrompts && scenes.some(s => s.status !== 'generated') && imagesReady > 0 && (
             <button

@@ -234,7 +234,8 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const updated = [];
-  for (const scene of scenes) {
+  for (let i = 0; i < scenes.length; i++) {
+    const scene = scenes[i];
     let prompt = scene.text;
     try {
       const result = await model.generateContent(
@@ -242,6 +243,11 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
       );
       prompt = result.response.text().trim() || scene.text;
     } catch (err) {
+      // First scene failure: surface the error so it's visible rather than silently falling back
+      if (i === 0) {
+        console.error('[prompts] Gemini failed on first scene:', err.message);
+        return res.status(400).json({ error: `Gemini API error: ${err.message}` });
+      }
       console.warn(`[prompts] Gemini error for scene ${scene.id}, falling back to scene text:`, err.message);
     }
     db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
