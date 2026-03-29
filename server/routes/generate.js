@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const { getNextToken, markTokenUsed, markTokenRateLimited } = require('../utils/gemini');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
@@ -229,7 +230,6 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     '- Return ONLY the image prompt, no explanation or preamble',
   ].filter(Boolean).join('\n');
 
-  const { GoogleGenerativeAI } = require('@google/generative-ai');
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
