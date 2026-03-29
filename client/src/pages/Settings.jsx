@@ -54,7 +54,7 @@ function TokenCooldown({ rateLimitedUntil, onExpired }) {
   return <span className="text-xs text-orange-400">auto-reset in {secs}s</span>;
 }
 
-function FlowTokensSection() {
+function GeminiKeysSection() {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newLabel, setNewLabel] = useState('');
@@ -82,7 +82,7 @@ function FlowTokensSection() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('Remove this Flow token?')) return;
+    if (!confirm('Remove this API key?')) return;
     await api.deleteWhiskToken(id);
     setTokens(t => t.filter(x => x.id !== id));
   }
@@ -107,11 +107,11 @@ function FlowTokensSection() {
   }[s] || 'text-gray-500 bg-gray-800');
 
   return (
-    <Section title="Flow Tokens — Token Rotation Pool">
+    <Section title="Image Generation — Gemini API Keys">
       <p className="text-sm text-gray-500">
-        Flow tokens are Google OAuth tokens (ya29.xxx) captured from your Google Flow session.
-        The app tries each active token in order, rotating when one hits its rate limit.
-        Tokens may expire daily — paste fresh ones here when needed.
+        Gemini API keys (AIza...) from Google AI Studio. The app tries each active key in order,
+        rotating when one hits its rate limit. Add multiple keys from different Google accounts
+        for higher throughput.
       </p>
 
       {loading ? (
@@ -119,7 +119,7 @@ function FlowTokensSection() {
       ) : (
         <div className="space-y-2">
           {tokens.length === 0 && (
-            <p className="text-sm text-gray-600 italic">No tokens added yet. Add your first Whisk token below.</p>
+            <p className="text-sm text-gray-600 italic">No API keys added yet. Add your first Gemini API key below.</p>
           )}
           {tokens.map(t => (
             <div key={t.id} className="bg-gray-800/50 border border-gray-700 rounded-lg p-3">
@@ -145,7 +145,7 @@ function FlowTokensSection() {
               <div className="flex gap-2">
                 <input
                   className="input text-xs font-mono flex-1"
-                  placeholder="Paste fresh token to update (ya29.xxx…)"
+                  placeholder="Paste replacement key (AIza…)"
                   value={editToken[t.id] || ''}
                   onChange={e => setEditToken(tok => ({ ...tok, [t.id]: e.target.value }))}
                 />
@@ -162,15 +162,15 @@ function FlowTokensSection() {
         </div>
       )}
 
-      {/* Add new token */}
+      {/* Add new key */}
       <form onSubmit={handleAdd} className="border-t border-gray-800 pt-4 space-y-3">
-        <h3 className="text-sm font-medium text-gray-400">Add New Token</h3>
+        <h3 className="text-sm font-medium text-gray-400">Add New Key</h3>
         <div className="grid grid-cols-2 gap-2">
           <input className="input text-sm" placeholder='Label (e.g. "Account 2")' value={newLabel} onChange={e => setNewLabel(e.target.value)} />
-          <input className="input text-sm font-mono" placeholder="ya29.xxx Flow token" value={newToken} onChange={e => setNewToken(e.target.value)} />
+          <input className="input text-sm font-mono" placeholder="AIza… Gemini API key" value={newToken} onChange={e => setNewToken(e.target.value)} />
         </div>
         <button type="submit" disabled={adding || !newLabel.trim() || !newToken.trim()} className="btn-primary flex items-center gap-2 text-sm">
-          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Token
+          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Key
         </button>
       </form>
     </Section>
@@ -244,54 +244,7 @@ export default function Settings() {
       </form>
 
       <div className="mt-6 space-y-6">
-        <Section title="Image Generation — Provider">
-          <div>
-            <label className="label">Image Provider</label>
-            <div className="flex gap-2 mt-1">
-              {[
-                { value: 'whisk', label: 'Whisk', desc: 'Imagen 3.5 via Whisk API — stable, no extension needed' },
-                { value: 'flow', label: 'Flow', desc: 'NARWHAL model via Flow API — requires HNTR extension' },
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => { onChange('image_provider', opt.value); api.saveSettings({ image_provider: opt.value }); }}
-                  className={`flex-1 rounded-lg border px-4 py-3 text-left transition-colors ${
-                    (values.image_provider || 'whisk') === opt.value
-                      ? 'border-indigo-500 bg-indigo-900/30 text-white'
-                      : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-600'
-                  }`}
-                >
-                  <div className="font-medium text-sm">{opt.label}</div>
-                  <div className="text-xs mt-0.5 opacity-70">{opt.desc}</div>
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              <strong className="text-gray-400">Whisk</strong> is the default and works without any browser extension.{' '}
-              Switch to <strong className="text-gray-400">Flow</strong> to test the NARWHAL model (requires the HNTR Flow Bridge extension).
-            </p>
-          </div>
-        </Section>
-
-        <Section title="Image Generation — Google Flow">
-          <div>
-            <label className="label">Flow Project ID</label>
-            <input
-              type="text"
-              className="input font-mono text-sm"
-              value={values.flow_project_id || ''}
-              onChange={e => onChange('flow_project_id', e.target.value)}
-              placeholder="0b18c780-3509-4d6e-84c6-dc4528e2b92b"
-            />
-          </div>
-          <p className="text-xs text-gray-500">
-            Your Google Flow project ID. Defaults to Dan's project if left blank.
-            Find it in the Flow URL or Network tab when generating an image.
-          </p>
-        </Section>
-
-        <FlowTokensSection />
+        <GeminiKeysSection />
       </div>
     </div>
   );

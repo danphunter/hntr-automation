@@ -49,12 +49,12 @@ export default function WhiskTokenBanner() {
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div>
               <p className={`font-semibold text-sm ${allExpired ? 'text-red-300' : 'text-yellow-300'}`}>
-                {allExpired ? 'All Flow tokens expired — image gen down' : `${expiredTokens.length} Flow token${expiredTokens.length > 1 ? 's' : ''} expired`}
+                {allExpired ? 'All Gemini API keys rate-limited — image gen down' : `${expiredTokens.length} Gemini API key${expiredTokens.length > 1 ? 's' : ''} rate-limited`}
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
                 {isAdmin
-                  ? 'Paste fresh tokens below. Grab them from labs.google/flow → DevTools → Network → Authorization header.'
-                  : 'Ask Dan or your token manager to refresh the Flow tokens.'}
+                  ? 'Paste fresh API keys below, or add a new key from Google AI Studio (aistudio.google.com).'
+                  : 'Ask Dan to refresh the Gemini API keys in Settings.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -63,7 +63,7 @@ export default function WhiskTokenBanner() {
                   onClick={() => setExpanded(v => !v)}
                   className="text-xs text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 flex items-center gap-1.5 transition-colors"
                 >
-                  <Key size={13} /> {expanded ? 'Hide' : 'Refresh Tokens'}
+                  <Key size={13} /> {expanded ? 'Hide' : 'Refresh Keys'}
                   <ChevronDown size={13} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
                 </button>
               )}
@@ -80,7 +80,7 @@ export default function WhiskTokenBanner() {
                   <div className="flex-shrink-0 w-24 text-xs text-gray-400 font-medium truncate" title={t.label}>{t.label}</div>
                   <input
                     className="input text-xs font-mono flex-1"
-                    placeholder="ya29.xxx — paste fresh Flow token"
+                    placeholder="AIza… — paste fresh Gemini API key"
                     value={updates[t.id] || ''}
                     onChange={e => setUpdates(u => ({ ...u, [t.id]: e.target.value }))}
                   />

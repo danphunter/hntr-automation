@@ -9,64 +9,6 @@ import {
   Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
-// Detect the HNTR Flow Bridge Chrome extension via a ping/pong CustomEvent.
-// content.js runs in the isolated world and responds to document-level events,
-// which cross the isolated/page world boundary via the shared DOM - no inline
-// scripts needed, fully CSP-safe.
-function checkExtension() {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(false), 1000);
-    document.addEventListener('hntr-pong', () => {
-      clearTimeout(timeout);
-      resolve(true);
-    }, { once: true });
-    document.dispatchEvent(new CustomEvent('hntr-ping'));
-  });
-}
-
-// Generate an image via the HNTR Flow Bridge Chrome extension.
-// The extension runs the full operation (reCAPTCHA + Flow API call) from the
-// labs.google tab, then returns the fifeUrl of the generated image.
-async function generateImageViaExtension(prompt, projectId, seed) {
-  const installed = await checkExtension();
-  if (!installed) {
-    throw new Error(
-      'HNTR Flow Bridge extension is not installed. ' +
-      'Please install it from the extension/ folder to generate images.'
-    );
-  }
-
-  return new Promise((resolve, reject) => {
-    const requestId = `req-${Date.now()}-${Math.random()}`;
-    const timeout = setTimeout(() => {
-      document.removeEventListener('hntr-generate-result', onResult);
-      document.removeEventListener('hntr-generate-error', onError);
-      reject(new Error('Image generation timed out. Please try again.'));
-    }, 60000);
-
-    function onResult(e) {
-      if (e.detail.requestId !== requestId) return;
-      clearTimeout(timeout);
-      document.removeEventListener('hntr-generate-result', onResult);
-      document.removeEventListener('hntr-generate-error', onError);
-      resolve(e.detail.fifeUrl);
-    }
-
-    function onError(e) {
-      if (e.detail.requestId !== requestId) return;
-      clearTimeout(timeout);
-      document.removeEventListener('hntr-generate-result', onResult);
-      document.removeEventListener('hntr-generate-error', onError);
-      reject(new Error(e.detail.error));
-    }
-
-    document.addEventListener('hntr-generate-result', onResult);
-    document.addEventListener('hntr-generate-error', onError);
-    document.dispatchEvent(new CustomEvent('hntr-generate-image', {
-      detail: { prompt, projectId, seed, requestId },
-    }));
-  });
-}
 
 const STEPS = [
   { id: 1, label: 'Project Details', icon: FileText },

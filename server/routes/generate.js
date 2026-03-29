@@ -10,8 +10,8 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
+// Legacy constants kept for backward compatibility with existing whisk/flow provider settings
 const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
-// Default Flow project ID captured from labs.google â can be overridden via settings/env
 const FLOW_PROJECT_ID_DEFAULT = '0b18c780-3509-4d6e-84c6-dc4528e2b92b';
 
 function getSettings(db) {
@@ -19,7 +19,7 @@ function getSettings(db) {
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// ââ Prompt sanitization âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Prompt sanitization (kept for whisk/flow backward compat) -----------------
 
 const WHISK_WORD_REPLACEMENTS = {
   'blood': 'red mist', 'bloody': 'dramatic', 'gore': 'detail', 'gory': 'intense',
@@ -62,7 +62,7 @@ function makeSimpleFallbackPrompt(prompt) {
   return `A digital illustration of ${stripped}, dramatic lighting, cinematic composition`;
 }
 
-// ââ Token rotation ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Token rotation ------------------------------------------------------------
 
 function getNextToken(db) {
   db.prepare(`
@@ -96,7 +96,74 @@ function markTokenRateLimited(db, tokenId, errMsg) {
   `).run(errMsg, tokenId);
 }
 
-// ââ Whisk API ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Gemini API (Imagen 3) -----------------------------------------------------
+
+async function generateViaGemini(apiKey, prompt) {
+  const fetch = (await import('node-fetch')).default;
+
+  const body = {
+    instances: [{ prompt }],
+    parameters: {
+      sampleCount: 1,
+      aspectRatio: '16:9',
+    },
+  };
+
+  const res = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (res.status === 429) {
+    const text = await res.text();
+    console.log('Gemini rate-limited:', res.status, text.slice(0, 500));
+    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+  }
+
+  if (res.status === 403) {
+    const text = await res.text();
+    console.log('Gemini forbidden (bad key or quota):', res.status, text.slice(0, 500));
+    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.log('Gemini error:', res.status, text.slice(0, 500));
+    if (
+      text.includes('PROHIBITED_CONTENT') ||
+      text.includes('SAFETY') ||
+      text.includes('BLOCKED') ||
+      text.includes('blocked')
+    ) {
+      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
+    }
+    throw new Error(`GEMINI_ERROR:${res.status}:${text.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+
+  // Empty predictions array means safety filter blocked the prompt
+  if (data.predictions && data.predictions.length === 0) {
+    const reason = data.metadata?.filteredReason || 'Safety filter';
+    throw new Error(`UNSAFE_CONTENT:${reason}`);
+  }
+
+  const encoded = data?.predictions?.[0]?.bytesBase64Encoded;
+  if (!encoded) {
+    console.log('Gemini response missing bytesBase64Encoded:', JSON.stringify(data).slice(0, 500));
+    return null;
+  }
+  return Buffer.from(encoded, 'base64');
+}
+
+// -- Whisk API (legacy) --------------------------------------------------------
 
 async function generateViaWhisk(bearerToken, prompt) {
   const fetch = (await import('node-fetch')).default;
@@ -154,11 +221,7 @@ async function generateViaWhisk(bearerToken, prompt) {
   return Buffer.from(encodedImage, 'base64');
 }
 
-// ââ Flow API (Google AI Sandbox) ââââââââââââââââââââââââââââââââââââââââââââââ
-// The extension obtains a reCAPTCHA Enterprise token from the labs.google tab,
-// makes the Flow API call there (satisfying CORS), and returns the fifeUrl.
-// The server-side route below (/image/:sceneId) is an alternate path that
-// accepts a pre-obtained recaptchaToken and calls the Flow API server-side.
+// -- Flow API (legacy, requires reCAPTCHA) -------------------------------------
 
 async function generateViaFlow(bearerToken, recaptchaToken, prompt, referenceIds, flowProjectId) {
   const fetch = (await import('node-fetch')).default;
@@ -251,26 +314,26 @@ async function saveImageFromBuffer(buffer) {
   return { filename, imgPath };
 }
 
-// ââ Routes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Routes --------------------------------------------------------------------
 
-// GET /api/generate/flow-config â returns image generation config for the client
+// GET /api/generate/flow-config -- returns image generation config for the client
 router.get('/flow-config', authMiddleware, (req, res) => {
   const db = getDb();
   const settings = getSettings(db);
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT || null;
-  const imageProvider = settings.image_provider || 'whisk';
+  const imageProvider = settings.image_provider || 'gemini';
   const wt = getNextToken(db);
   res.json({
     flowProjectId,
     siteKey: RECAPTCHA_SITE_KEY,
     hasToken: !!wt,
     imageProvider,
-    // Expose bearer token so the client (via extension) can call the Flow API directly
-    bearerToken: wt?.token || null,
+    // Only expose bearer token for legacy whisk/flow providers (never for gemini)
+    bearerToken: (imageProvider !== 'gemini' && wt?.token) ? wt.token : null,
   });
 });
 
-// POST /api/generate/save-image â download a fifeUrl and save it for a scene
+// POST /api/generate/save-image -- download a fifeUrl and save it for a scene
 router.post('/save-image', authMiddleware, async (req, res) => {
   const { sceneId, fifeUrl } = req.body;
   if (!sceneId || !fifeUrl) return res.status(400).json({ error: 'sceneId and fifeUrl required' });
@@ -314,10 +377,9 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   }
 
   const settings = getSettings(db);
-  const imageProvider = settings.image_provider || 'whisk';
+  const imageProvider = settings.image_provider || 'gemini';
   const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
   const { recaptchaToken } = req.body;
-
 
   // Build prompt with style prefix/suffix
   let rawPrompt = scene.image_prompt || scene.text;
@@ -334,10 +396,10 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
 
-  // Sanitize prompt for Whisk (has safety filters); Flow's NARWHAL model is more permissive
+  // Sanitize prompt for Whisk (has safety filters); Gemini and Flow handle it themselves
   let prompt = imageProvider === 'whisk' ? sanitizePrompt(rawPrompt) : rawPrompt;
 
-  // Token rotation
+  // Token rotation loop
   let imageBuffer = null;
   let source = 'unknown';
   let triedCount = 0;
@@ -353,15 +415,17 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       `).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
       const msg = triedCount === 0
-        ? 'No active tokens â add a token in Settings'
-        : 'All tokens are rate-limited â add a fresh token in Settings';
+        ? 'No active API keys — add a Gemini API key in Settings'
+        : 'All API keys are rate-limited — add a fresh key in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
 
     triedCount++;
     try {
       let buffer;
-      if (imageProvider === 'flow') {
+      if (imageProvider === 'gemini') {
+        buffer = await generateViaGemini(wt.token.trim(), prompt);
+      } else if (imageProvider === 'flow') {
         buffer = await generateViaFlow(wt.token.trim(), recaptchaToken, prompt, referenceIds, flowProjectId);
       } else {
         buffer = await generateViaWhisk(wt.token.trim(), prompt);
@@ -376,9 +440,9 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Token "${wt.label}" rate limited, rotating...`);
+        console.log(`Key "${wt.label}" rate limited, rotating...`);
       } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
-        console.warn(`Safety filter triggered, retrying with fallback prompt. Token: "${wt.label}"`);
+        console.warn(`Safety filter triggered, retrying with fallback prompt. Key: "${wt.label}"`);
         unsafeContentRetried = true;
         prompt = makeSimpleFallbackPrompt(rawPrompt);
         console.log('Fallback prompt:', prompt);
@@ -386,7 +450,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
         continue;
       } else {
         markTokenRateLimited(db, wt.id, err.message);
-        console.error(`Token "${wt.label}" error:`, err.message);
+        console.error(`Key "${wt.label}" error:`, err.message);
       }
     }
 
@@ -402,7 +466,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     `).get();
     const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
     return res.status(429).json({
-      error: 'All tokens are rate-limited or expired â add a fresh token in Settings',
+      error: 'All API keys are rate-limited or exhausted — add a fresh key in Settings',
       retry_after: retrySecs,
     });
   }
@@ -423,7 +487,7 @@ router.get('/image-file/:filename', (req, res) => {
   res.sendFile(imgPath);
 });
 
-// POST /api/generate/prompts/:projectId â auto-generate all image prompts
+// POST /api/generate/prompts/:projectId -- auto-generate all image prompts
 router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const db = getDb();
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.projectId);
@@ -453,7 +517,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   }
 
   const systemPrompt = [
-    'You are an expert at writing image generation prompts for AI art tools like Stable Diffusion and Whisk.',
+    'You are an expert at writing image generation prompts for AI art tools like Stable Diffusion and Imagen.',
     styleContext ? `Style context: ${styleContext}` : '',
     '',
     'Your job is to translate spoken narration into a vivid VISUAL scene description.',
@@ -497,7 +561,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   res.json({ scenes: updated, demo: false });
 });
 
-// ââ Token Management ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- API Key Management --------------------------------------------------------
 
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -510,6 +574,7 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const { label, token } = req.body;
   if (!label || !token) return res.status(400).json({ error: 'label and token required' });
+  // Strip accidental "Bearer " prefix (harmless for API keys)
   const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
   const db = getDb();
   const id = uuidv4();
