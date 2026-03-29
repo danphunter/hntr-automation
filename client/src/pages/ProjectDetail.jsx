@@ -92,10 +92,8 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
 }
 
 // ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId, onPreview }) {
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview }) {
   const isGenerating = generatingId === scene.id;
-  const isAnimating = animatingId === scene.id;
-  const hasVideo = !!scene.video_url;
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border-b border-gray-800">
@@ -105,16 +103,6 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
         <span className="text-xs font-mono text-gray-500 flex-1 truncate">
           {formatTime(scene.start_time)} → {formatTime(scene.end_time)} · {scene.duration}s
         </span>
-        {isAnimating && (
-          <span className="text-xs text-purple-400 flex items-center gap-1 flex-shrink-0">
-            <Loader2 size={11} className="animate-spin" /> Animating…
-          </span>
-        )}
-        {!isAnimating && hasVideo && (
-          <span className="text-xs text-purple-400 flex items-center gap-1 flex-shrink-0">
-            <Film size={11} /> Animated
-          </span>
-        )}
         {isGenerating && <Loader2 size={13} className="animate-spin text-indigo-400 flex-shrink-0" />}
         {!isGenerating && scene.status === 'generated' && <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />}
         {!isGenerating && scene.status !== 'generated' && <Clock size={13} className="text-gray-600 flex-shrink-0" />}
@@ -135,7 +123,7 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
                   : <Image size={20} />}
               </div>
             )}
-            {(isGenerating || isAnimating) && scene.image_url && (
+            {isGenerating && scene.image_url && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                 <Loader2 size={18} className="animate-spin text-indigo-400" />
               </div>
@@ -143,7 +131,7 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
           </div>
           <button
             onClick={() => onRegenerate(scene.id)}
-            disabled={isGenerating || isAnimating || !scene.image_url}
+            disabled={isGenerating || !scene.image_url}
             className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
@@ -189,7 +177,6 @@ export default function ProjectDetail() {
   // Step 4
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
-  const [animatingId, setAnimatingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const autoGenTriggered = useRef(false);
@@ -198,8 +185,6 @@ export default function ProjectDetail() {
   // Step 5
   const [renderProgress, setRenderProgress] = useState(null);
   const [usePlaceholders, setUsePlaceholders] = useState(false);
-  const [scenePatternType, setScenePatternType] = useState('all_image');
-  const [scenePatternN, setScenePatternN] = useState(10);
   const pollRef = useRef(null);
 
   // Lightbox
@@ -224,8 +209,6 @@ export default function ProjectDetail() {
         setProject(proj);
         setScenes(scns);
         setEditTitle(proj.title || '');
-        setScenePatternType(proj.scene_pattern_type || 'all_image');
-        setScenePatternN(proj.scene_pattern_n || 10);
         // style_id may be null for older projects - fall back to matching by style name
         const styleId = proj.style_id
           ? String(proj.style_id)
@@ -423,7 +406,6 @@ export default function ProjectDetail() {
     } finally {
       setGeneratingAll(false);
       setGeneratingId(null);
-      setAnimatingId(null);
     }
   }
 
@@ -445,7 +427,6 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      await api.updateProject(id, { scene_pattern_type: scenePatternType, scene_pattern_n: scenePatternN });
       const result = await api.startRender(id, usePlaceholders);
       setRenderProgress({ status: 'processing', progress: 0 });
 
@@ -783,7 +764,6 @@ export default function ProjectDetail() {
                 index={i}
                 onRegenerate={handleRegenerateImage}
                 generatingId={generatingId}
-                animatingId={animatingId}
                 onPreview={setLightboxScene}
               />
             ))}
@@ -834,75 +814,6 @@ export default function ProjectDetail() {
               <span>Est. Duration</span>
               <span className="text-gray-200">{formatTime(totalDuration)}</span>
             </div>
-          </div>
-
-          {/* Scene pattern / Veo animation */}
-          <div className="card p-4 space-y-3">
-            <div className="text-sm font-medium text-gray-300">Veo Animation Pattern</div>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              {[
-                { value: 'all_image', label: 'All Images', desc: 'No Veo — Ken Burns effect' },
-                { value: 'all_video', label: 'All Video', desc: 'Animate every scene' },
-                { value: 'alternating', label: 'Alternating', desc: 'Image, Video, Image, Video…' },
-                { value: '2_image_1_video', label: '2 + 1 Loop', desc: 'Image, Image, Video…' },
-                { value: 'first_n_video', label: 'First N Video', desc: 'First N scenes animated' },
-                { value: 'custom', label: 'Custom', desc: 'Toggle per scene below' },
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setScenePatternType(opt.value)}
-                  className={`text-left p-2.5 rounded-lg border transition-colors ${
-                    scenePatternType === opt.value
-                      ? 'border-indigo-500 bg-indigo-900/30 text-white'
-                      : 'border-gray-700 bg-gray-800/40 text-gray-400 hover:border-gray-600'
-                  }`}
-                >
-                  <div className="font-medium">{opt.label}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
-                </button>
-              ))}
-            </div>
-            {scenePatternType === 'first_n_video' && (
-              <div className="flex items-center gap-3">
-                <label className="text-sm text-gray-400 whitespace-nowrap">Animate first</label>
-                <input
-                  type="number"
-                  min="1"
-                  max={scenes.length}
-                  value={scenePatternN}
-                  onChange={e => setScenePatternN(Math.max(1, Math.min(scenes.length, Number(e.target.value))))}
-                  className="input w-20 text-sm text-center"
-                />
-                <span className="text-sm text-gray-400">scene(s)</span>
-              </div>
-            )}
-            {scenePatternType === 'custom' && (
-              <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-                {scenes.map((scene, i) => (
-                  <label key={scene.id} className="flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
-                    <input
-                      type="checkbox"
-                      checked={!!scene.use_veo}
-                      onChange={async e => {
-                        const updated = scenes.map(s => s.id === scene.id ? { ...s, use_veo: e.target.checked ? 1 : 0 } : s);
-                        setScenes(updated);
-                        await api.updateScene(id, scene.id, { use_veo: e.target.checked ? 1 : 0 });
-                      }}
-                      className="accent-indigo-500"
-                    />
-                    <span>Scene {i + 1}</span>
-                    <span className="text-gray-600 truncate">{scene.text?.slice(0, 50)}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-            {scenePatternType !== 'all_image' && (
-              <p className="text-xs text-gray-600">
-                Veo generates video from the scene text prompt during rendering (~1–3 min per clip).
-                Requires a valid Bearer token with Veo access. Falls back to Ken Burns if a clip fails.
-              </p>
-            )}
           </div>
 
           {/* Placeholder toggle when some images are missing */}

@@ -4,14 +4,12 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
-const { getNextToken, markTokenUsed, markTokenRateLimited, generateViaGemini, generateViaVeo } = require('../utils/gemini');
+const { getNextToken, markTokenUsed, markTokenRateLimited } = require('../utils/gemini');
 
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
-const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
-if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
 const RECAPTCHA_SITE_KEY = '6Lf4cposAAAAAGKXuD1jmpAmr4Yf0kGTq_AGLxtz';
 const FLOW_PROJECT_ID_DEFAULT = 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
@@ -185,16 +183,12 @@ async function saveImageFromBuffer(buffer) {
 router.get('/flow-config', authMiddleware, (req, res) => {
   const db = getDb();
   const settings = getSettings(db);
-  const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT || null;
   const imageProvider = settings.image_provider || 'flow';
-  const veoEnabled = settings.veo_enabled === 'true' || settings.veo_enabled === '1';
   const wt = getNextToken(db);
   res.json({
-    flowProjectId,
     siteKey: RECAPTCHA_SITE_KEY,
     hasToken: !!wt,
     imageProvider,
-    veoEnabled,
     bearerToken: wt?.token || null,
   });
 });
@@ -232,7 +226,6 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   const settings = getSettings(db);
   const imageProvider = settings.image_provider || 'flow';
-  const flowProjectId = settings.flow_project_id || process.env.FLOW_PROJECT_ID || FLOW_PROJECT_ID_DEFAULT;
   const { recaptchaToken } = req.body;
 
   let rawPrompt = scene.image_prompt || scene.text;
@@ -241,10 +234,8 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
-      if (imageProvider === 'flow') {
-        const refs = db.prepare('SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL').all(project.style_id);
-        referenceIds = refs.map(r => r.flow_media_id);
-      }
+      const refs = db.prepare('SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL').all(project.style_id);
+      referenceIds = refs.map(r => r.flow_media_id);
     }
   }
 
@@ -259,16 +250,16 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     if (!wt) {
       const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
       const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-      const msg = triedCount === 0 ? 'No active API keys — add a Gemini API key in Settings' : 'All API keys are rate-limited — add a fresh key in Settings';
+      const msg = triedCount === 0 ? 'No active Bearer tokens — add a token in Settings' : 'All Bearer tokens are rate-limited — add a fresh token in Settings';
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
     triedCount++;
+    // Use per-token projectId for Flow; fall back to global setting or default
+    const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
     try {
       let buffer;
-      if (imageProvider === 'gemini') {
-        buffer = await generateViaGemini(wt.token.trim(), prompt);
-      } else if (imageProvider === 'flow') {
-        buffer = await generateViaFlow(wt.token.trim(), recaptchaToken, prompt, referenceIds, flowProjectId);
+      if (imageProvider === 'flow') {
+        buffer = await generateViaFlow(wt.token.trim(), recaptchaToken, prompt, referenceIds, projectId);
       } else {
         buffer = await generateViaWhisk(wt.token.trim(), prompt);
       }
@@ -277,7 +268,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Key "${wt.label}" rate limited, rotating...`);
+        console.log(`Token "${wt.label}" rate limited, rotating...`);
       } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
         console.warn(`Safety filter triggered, retrying with fallback prompt`);
         unsafeContentRetried = true;
@@ -286,7 +277,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
         continue;
       } else {
         markTokenRateLimited(db, wt.id, err.message);
-        console.error(`Key "${wt.label}" error:`, err.message);
+        console.error(`Token "${wt.label}" error:`, err.message);
       }
     }
     const totalTokens = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
@@ -296,7 +287,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   if (!imageBuffer) {
     const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
     const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-    return res.status(429).json({ error: 'All API keys are rate-limited or exhausted — add a fresh key in Settings', retry_after: retrySecs });
+    return res.status(429).json({ error: 'All Bearer tokens are rate-limited or exhausted — add a fresh token in Settings', retry_after: retrySecs });
   }
 
   const { filename, imgPath } = await saveImageFromBuffer(imageBuffer);
@@ -311,73 +302,6 @@ router.get('/image-file/:filename', (req, res) => {
   if (!imgPath.startsWith(IMAGES_DIR)) return res.status(404).json({ error: 'Not found' });
   if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Not found' });
   res.sendFile(imgPath);
-});
-
-// POST /api/generate/video/:sceneId — generate a Veo video for a scene
-router.post('/video/:sceneId', authMiddleware, async (req, res) => {
-  const db = getDb();
-  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
-  if (!scene) return res.status(404).json({ error: 'Scene not found' });
-  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
-  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-
-  // Veo is text-to-video — use the scene's image prompt as the video prompt
-  const videoPrompt = scene.image_prompt || scene.text;
-  if (!videoPrompt) return res.status(400).json({ error: 'Scene has no prompt — generate prompts first' });
-
-  // Rotate through Bearer tokens (same pool as image generation)
-  let videoBuffer = null;
-  let triedCount = 0;
-
-  while (true) {
-    const wt = getNextToken(db);
-    if (!wt) {
-      const msg = triedCount === 0
-        ? 'No active Bearer tokens — add a token in Settings'
-        : 'All Bearer tokens are rate-limited — try again shortly';
-      return res.status(429).json({ error: msg });
-    }
-    triedCount++;
-    const projectId = wt.project_id || 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
-    try {
-      const buf = await generateViaVeo(wt.token.trim(), projectId, videoPrompt);
-      if (buf) { markTokenUsed(db, wt.id); videoBuffer = buf; break; }
-      markTokenRateLimited(db, wt.id, 'Empty response from Veo');
-    } catch (err) {
-      if (err.message.startsWith('RATE_LIMITED')) {
-        markTokenRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Token "${wt.label}" Veo rate limited, rotating...`);
-      } else {
-        markTokenRateLimited(db, wt.id, err.message);
-        console.error(`Token "${wt.label}" Veo error:`, err.message);
-        return res.status(500).json({ error: `Veo generation failed: ${err.message}` });
-      }
-    }
-    const total = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
-    if (triedCount >= total) break;
-  }
-
-  if (!videoBuffer) {
-    return res.status(429).json({ error: 'All API keys are rate-limited for Veo — try again shortly' });
-  }
-
-  const filename = `vid-${uuidv4()}.mp4`;
-  const vidPath = path.join(VIDEOS_DIR, filename);
-  fs.writeFileSync(vidPath, videoBuffer);
-  const localUrl = `/api/generate/video-file/${filename}`;
-
-  db.prepare('UPDATE scenes SET video_url = ?, video_path = ?, video_status = ? WHERE id = ?')
-    .run(localUrl, vidPath, 'generated', scene.id);
-
-  res.json({ video_url: localUrl });
-});
-
-// GET /api/generate/video-file/:filename
-router.get('/video-file/:filename', (req, res) => {
-  const vidPath = path.join(VIDEOS_DIR, path.basename(req.params.filename));
-  if (!vidPath.startsWith(VIDEOS_DIR)) return res.status(404).json({ error: 'Not found' });
-  if (!fs.existsSync(vidPath)) return res.status(404).json({ error: 'Not found' });
-  res.sendFile(vidPath);
 });
 
 // POST /api/generate/prompts/:projectId
