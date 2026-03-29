@@ -347,6 +347,7 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   const fetch = (await import('node-fetch')).default;
   const updated = [];
   for (const scene of scenes) {
+    let prompt = scene.text;
     try {
       const resp = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -362,16 +363,15 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
       });
       const data = await resp.json();
       if (data.error) {
-        console.error('[prompts] OpenAI error:', data.error);
-        return res.status(400).json({ error: `OpenAI: ${data.error.message || data.error.code || 'Unknown error'}` });
+        console.warn(`[prompts] OpenAI error for scene ${scene.id}, falling back to scene text:`, data.error.message || data.error.code);
+      } else {
+        prompt = data.choices?.[0]?.message?.content?.trim() || scene.text;
       }
-      const prompt = data.choices?.[0]?.message?.content?.trim() || '';
-      db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
-      updated.push({ id: scene.id, image_prompt: prompt });
     } catch (err) {
-      console.error('[prompts] fetch error:', err.message);
-      return res.status(500).json({ error: `Prompt generation failed: ${err.message}` });
+      console.warn(`[prompts] OpenAI fetch failed for scene ${scene.id}, falling back to scene text:`, err.message);
     }
+    db.prepare('UPDATE scenes SET image_prompt = ? WHERE id = ?').run(prompt, scene.id);
+    updated.push({ id: scene.id, image_prompt: prompt });
   }
   res.json({ scenes: updated, demo: false });
 });
