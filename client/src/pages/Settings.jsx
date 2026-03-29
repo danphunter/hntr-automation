@@ -59,6 +59,7 @@ function GeminiKeysSection() {
   const [loading, setLoading] = useState(true);
   const [newLabel, setNewLabel] = useState('');
   const [newToken, setNewToken] = useState('');
+  const [newProjectId, setNewProjectId] = useState('');
   const [adding, setAdding] = useState(false);
   const [editToken, setEditToken] = useState({});
 
@@ -74,15 +75,15 @@ function GeminiKeysSection() {
     if (!newLabel.trim() || !newToken.trim()) return;
     setAdding(true);
     try {
-      await api.addWhiskToken(newLabel.trim(), newToken.trim());
-      setNewLabel(''); setNewToken('');
+      await api.addWhiskToken(newLabel.trim(), newToken.trim(), newProjectId.trim() || undefined);
+      setNewLabel(''); setNewToken(''); setNewProjectId('');
       load();
     } catch (err) { alert(err.message); }
     finally { setAdding(false); }
   }
 
   async function handleDelete(id) {
-    if (!confirm('Remove this API key?')) return;
+    if (!confirm('Remove this token?')) return;
     await api.deleteWhiskToken(id);
     setTokens(t => t.filter(x => x.id !== id));
   }
@@ -162,15 +163,21 @@ function GeminiKeysSection() {
         </div>
       )}
 
-      {/* Add new key */}
+      {/* Add new token */}
       <form onSubmit={handleAdd} className="border-t border-gray-800 pt-4 space-y-3">
-        <h3 className="text-sm font-medium text-gray-400">Add New Key</h3>
+        <h3 className="text-sm font-medium text-gray-400">Add New Token</h3>
         <div className="grid grid-cols-2 gap-2">
           <input className="input text-sm" placeholder='Label (e.g. "Account 2")' value={newLabel} onChange={e => setNewLabel(e.target.value)} />
           <input className="input text-sm font-mono" placeholder="ya29.xxx Bearer token" value={newToken} onChange={e => setNewToken(e.target.value)} />
         </div>
+        <input
+          className="input text-sm font-mono w-full"
+          placeholder="Flow Project ID (from network tab — leave blank to use default)"
+          value={newProjectId}
+          onChange={e => setNewProjectId(e.target.value)}
+        />
         <button type="submit" disabled={adding || !newLabel.trim() || !newToken.trim()} className="btn-primary flex items-center gap-2 text-sm">
-          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Key
+          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Token
         </button>
       </form>
     </Section>

@@ -313,7 +313,7 @@ router.get('/image-file/:filename', (req, res) => {
   res.sendFile(imgPath);
 });
 
-// POST /api/generate/video/:sceneId — animate a scene image with Veo
+// POST /api/generate/video/:sceneId — generate a Veo video for a scene
 router.post('/video/:sceneId', authMiddleware, async (req, res) => {
   const db = getDb();
   const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
@@ -321,29 +321,11 @@ router.post('/video/:sceneId', authMiddleware, async (req, res) => {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
-  if (!scene.image_url && !scene.image_path) {
-    return res.status(400).json({ error: 'Generate an image for this scene first' });
-  }
+  // Veo is text-to-video — use the scene's image prompt as the video prompt
+  const videoPrompt = scene.image_prompt || scene.text;
+  if (!videoPrompt) return res.status(400).json({ error: 'Scene has no prompt — generate prompts first' });
 
-  // Load the generated image from disk
-  let imageBuffer;
-  try {
-    const imgFilename = path.basename(scene.image_url || scene.image_path || '');
-    const imgPath = path.join(IMAGES_DIR, imgFilename);
-    if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Image file not found on disk' });
-    imageBuffer = fs.readFileSync(imgPath);
-  } catch (err) {
-    return res.status(500).json({ error: `Failed to read image: ${err.message}` });
-  }
-
-  // Build a motion prompt that matches the style's slow_pan preference
-  const style = project.style_id ? db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id) : null;
-  const slowPan = style?.slow_pan === 1 || style?.slow_pan === true;
-  const motionPrompt = slowPan
-    ? 'Cinematic slow camera pan across the scene, smooth parallax depth, atmospheric mood, photorealistic motion, no text'
-    : 'Gentle cinematic camera movement, subtle zoom and atmospheric motion, high quality, photorealistic, no text';
-
-  // Rotate through API keys (same pool as image generation)
+  // Rotate through Bearer tokens (same pool as image generation)
   let videoBuffer = null;
   let triedCount = 0;
 
@@ -351,24 +333,23 @@ router.post('/video/:sceneId', authMiddleware, async (req, res) => {
     const wt = getNextToken(db);
     if (!wt) {
       const msg = triedCount === 0
-        ? 'No active API keys — add a Gemini API key in Settings'
-        : 'All API keys are rate-limited — try again shortly';
+        ? 'No active Bearer tokens — add a token in Settings'
+        : 'All Bearer tokens are rate-limited — try again shortly';
       return res.status(429).json({ error: msg });
     }
     triedCount++;
+    const projectId = wt.project_id || 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
     try {
-      const buf = await generateViaVeo(wt.token.trim(), imageBuffer, motionPrompt);
+      const buf = await generateViaVeo(wt.token.trim(), projectId, videoPrompt);
       if (buf) { markTokenUsed(db, wt.id); videoBuffer = buf; break; }
       markTokenRateLimited(db, wt.id, 'Empty response from Veo');
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Key "${wt.label}" Veo rate limited, rotating...`);
+        console.log(`Token "${wt.label}" Veo rate limited, rotating...`);
       } else {
-        // Non-retryable errors (safety, timeout, bad response) — mark and stop
         markTokenRateLimited(db, wt.id, err.message);
-        console.error(`Key "${wt.label}" Veo error:`, err.message);
-        // Only rotate for rate-limit errors; abort for other errors
+        console.error(`Token "${wt.label}" Veo error:`, err.message);
         return res.status(500).json({ error: `Veo generation failed: ${err.message}` });
       }
     }
@@ -476,29 +457,31 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
-  const tokens = db.prepare('SELECT id, label, usage_count, status, last_used, last_error, rate_limited_until, sort_order, created_at FROM whisk_tokens ORDER BY sort_order ASC, created_at ASC').all();
+  const tokens = db.prepare('SELECT id, label, project_id, usage_count, status, last_used, last_error, rate_limited_until, sort_order, created_at FROM whisk_tokens ORDER BY sort_order ASC, created_at ASC').all();
   res.json(tokens);
 });
 
 router.post('/whisk-tokens', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const { label, token } = req.body;
+  const { label, token, project_id } = req.body;
   if (!label || !token) return res.status(400).json({ error: 'label and token required' });
   const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
+  const cleanProjectId = (project_id || 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077').trim();
   const db = getDb();
   const id = uuidv4();
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM whisk_tokens').get().m;
-  db.prepare('INSERT INTO whisk_tokens (id, label, token, sort_order) VALUES (?, ?, ?, ?)').run(id, label, cleanToken, maxOrder + 1);
-  res.status(201).json({ id, label, usage_count: 0, status: 'active', sort_order: maxOrder + 1 });
+  db.prepare('INSERT INTO whisk_tokens (id, label, token, project_id, sort_order) VALUES (?, ?, ?, ?, ?)').run(id, label, cleanToken, cleanProjectId, maxOrder + 1);
+  res.status(201).json({ id, label, project_id: cleanProjectId, usage_count: 0, status: 'active', sort_order: maxOrder + 1 });
 });
 
 router.put('/whisk-tokens/:id', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
-  const { label, status } = req.body;
+  const { label, status, project_id } = req.body;
   const cleanToken = req.body.token ? req.body.token.trim().replace(/^Bearer\s+/i, '') : undefined;
-  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status) WHERE id = ?').run(label, cleanToken, status, req.params.id);
-  const t = db.prepare('SELECT id, label, usage_count, status, last_used, last_error, rate_limited_until, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
+  const cleanProjectId = project_id ? project_id.trim() : undefined;
+  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status), project_id = COALESCE(?, project_id) WHERE id = ?').run(label, cleanToken, status, cleanProjectId, req.params.id);
+  const t = db.prepare('SELECT id, label, project_id, usage_count, status, last_used, last_error, rate_limited_until, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
   res.json(t);
 });
 

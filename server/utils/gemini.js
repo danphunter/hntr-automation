@@ -69,44 +69,39 @@ async function generateViaGemini(bearerToken, prompt) {
   return Buffer.from(encoded, 'base64');
 }
 
-// -- Veo video generation via aisandbox-pa.googleapis.com ---------------------
-// Confirmed endpoint (captured by Dan from Flow network tab):
-//   POST https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText
+// -- Veo 3.1 text-to-video (t2v) via aisandbox-pa.googleapis.com -------------
+// Endpoint and payload fully confirmed by Dan from Flow network tab.
+// TEXT-TO-VIDEO — no image sent; Veo generates video purely from a text prompt.
+// The scene's image prompt (already styled) is used as the video prompt.
+// No reCAPTCHA required for t2v.
 //
-// Request body structure partially confirmed. Fields still needing verification
-// from Dan's network tab:
-//   - Image field name inside requests[] (guessing "image" with base64)
-//   - Prompt field name inside requests[] (guessing "structuredPrompt" matching Flow image gen)
-//   - Polling endpoint/method — TODO: capture status check request from network tab
-//   - Done condition field name in poll response
-//   - Video data location in final response
+// NOTE: Image-to-video (i2v) also exists (model: veo_3_1_i2v_s_fast_ultra) but
+// requires reCAPTCHA in clientContext AND a mediaId from the image generation
+// response (not base64). i2v is not implemented here due to the reCAPTCHA blocker.
+// See generateViaFlow() in generate.js for the reCAPTCHA infrastructure if needed.
 
-async function generateViaVeo(bearerToken, imageBuffer, motionPrompt) {
+async function generateViaVeo(bearerToken, projectId, videoPrompt) {
   const fetch = (await import('node-fetch')).default;
   const batchId = uuidv4();
 
-  // Request body — top-level structure confirmed; requests[] fields are inferred
   const body = {
     mediaGenerationContext: {
       batchId,
     },
     clientContext: {
-      projectId: 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077',
+      projectId,
       tool: 'PINHOLE',
     },
     requests: [{
       aspectRatio: 'VIDEO_ASPECT_RATIO_PORTRAIT',
+      metadata: {},
       seed: Math.floor(Math.random() * 1000000),
-      // Image source — field name needs verification; "image" matches Flow image gen pattern
-      image: {
-        bytesBase64Encoded: imageBuffer.toString('base64'),
-        mimeType: 'image/jpeg',
+      textInput: {
+        structuredPrompt: {
+          parts: [{ text: videoPrompt }],
+        },
       },
-      // Prompt — "structuredPrompt" matches the Flow image gen request format
-      // TODO: Dan — verify this field name from the captured network request body
-      structuredPrompt: {
-        parts: [{ text: motionPrompt }],
-      },
+      videoModelKey: 'veo_3_1_t2v_fast_portrait_ultra',
     }],
     useV2ModelConfig: true,
   };
@@ -141,11 +136,8 @@ async function generateViaVeo(bearerToken, imageBuffer, motionPrompt) {
   const startData = await startRes.json();
   console.log('[veo] Job submitted (batchId=%s) response:', batchId, JSON.stringify(startData).slice(0, 500));
 
-  // TODO: Capture the status-check request from Flow's network tab to confirm:
-  //   (a) The polling URL/method
-  //   (b) Whether it uses batchId or an operation ID from the start response
-  //   (c) The done-state field name
-  //
+  // Polling endpoint is inferred — capture the status-check request from Flow's network tab
+  // to confirm: (a) exact URL, (b) method, (c) done-state field name.
   // Best guess: POST .../video:batchGetVideoStatus with { "batchIds": [batchId] }
   // Polling every 10s, max 15 minutes (90 polls)
 

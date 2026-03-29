@@ -79,9 +79,6 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   const patternType = project.scene_pattern_type || 'all_image';
   const patternN = project.scene_pattern_n || 10;
   const slowPan = project.slow_pan === 1 || project.slow_pan === true;
-  const motionPrompt = slowPan
-    ? 'Cinematic slow camera pan across the scene, smooth parallax depth, atmospheric mood, photorealistic motion, no text'
-    : 'Gentle cinematic camera movement, subtle zoom and atmospheric motion, high quality, photorealistic, no text';
 
   function setStatus(progress, message) {
     renderJobs.set(jobId, { status: 'processing', progress, message, projectId: project.id });
@@ -141,33 +138,29 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
         setStatus(10 + Math.round((vi / needsVeo.length) * 30), `Animating scene ${sceneNum} with Veo (${vi + 1}/${needsVeo.length})...`);
         console.log(`[render ${jobId}] Veo: scene ${sceneNum}...`);
 
-        let imageBuffer;
-        try {
-          imageBuffer = fs.readFileSync(sp.imgPath);
-        } catch (err) {
-          console.warn(`[render ${jobId}] Veo: could not read image for scene ${sceneNum}, skipping:`, err.message);
-          continue;
-        }
+        // Veo is text-to-video — use the scene's image prompt
+        const videoPrompt = sp.scene.image_prompt || sp.scene.text;
 
         let videoBuffer = null;
         let triedCount = 0;
         while (true) {
           const wt = getNextToken(db);
           if (!wt) {
-            console.warn(`[render ${jobId}] Veo: no active API keys for scene ${sceneNum}, falling back to image`);
+            console.warn(`[render ${jobId}] Veo: no active tokens for scene ${sceneNum}, falling back to image`);
             break;
           }
           triedCount++;
+          const projectId = wt.project_id || 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
           try {
-            const buf = await generateViaVeo(wt.token.trim(), imageBuffer, motionPrompt);
+            const buf = await generateViaVeo(wt.token.trim(), projectId, videoPrompt);
             if (buf) { markTokenUsed(db, wt.id); videoBuffer = buf; break; }
             markTokenRateLimited(db, wt.id, 'Empty Veo response');
           } catch (err) {
             if (err.message.startsWith('RATE_LIMITED')) {
               markTokenRateLimited(db, wt.id, err.message.slice(12));
-              console.log(`[render ${jobId}] Key "${wt.label}" Veo rate-limited, rotating...`);
+              console.log(`[render ${jobId}] Token "${wt.label}" Veo rate-limited, rotating...`);
             } else {
-              console.error(`[render ${jobId}] Key "${wt.label}" Veo error for scene ${sceneNum}:`, err.message);
+              console.error(`[render ${jobId}] Token "${wt.label}" Veo error for scene ${sceneNum}:`, err.message);
               break; // non-retryable — fall back to image
             }
           }

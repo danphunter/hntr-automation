@@ -74,7 +74,7 @@ export const api = {
 
   // Flow tokens (stored in whisk_tokens table, same API paths)
   getWhiskTokens: () => request('GET', '/generate/whisk-tokens'),
-  addWhiskToken: (label, token) => request('POST', '/generate/whisk-tokens', { label, token }),
+  addWhiskToken: (label, token, projectId) => request('POST', '/generate/whisk-tokens', { label, token, ...(projectId ? { project_id: projectId } : {}) }),
   updateWhiskToken: (id, data) => request('PUT', `/generate/whisk-tokens/${id}`, data),
   deleteWhiskToken: (id) => request('DELETE', `/generate/whisk-tokens/${id}`),
   resetWhiskToken: (id) => request('POST', `/generate/whisk-tokens/${id}/reset`),

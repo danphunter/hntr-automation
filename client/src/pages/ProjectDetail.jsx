@@ -899,8 +899,8 @@ export default function ProjectDetail() {
             )}
             {scenePatternType !== 'all_image' && (
               <p className="text-xs text-gray-600">
-                Veo animates scenes during rendering (~1–3 min per clip). Requires Gemini API keys with Veo access.
-                Falls back to Ken Burns if a clip fails.
+                Veo generates video from the scene text prompt during rendering (~1–3 min per clip).
+                Requires a valid Bearer token with Veo access. Falls back to Ken Burns if a clip fails.
               </p>
             )}
           </div>

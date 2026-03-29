@@ -158,6 +158,7 @@ function initDb() {
     "ALTER TABLE projects ADD COLUMN scene_pattern_type TEXT DEFAULT 'all_image'",
     "ALTER TABLE projects ADD COLUMN scene_pattern_n INTEGER DEFAULT 10",
     "ALTER TABLE scenes ADD COLUMN use_veo INTEGER DEFAULT 0",
+    "ALTER TABLE whisk_tokens ADD COLUMN project_id TEXT DEFAULT 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077'",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
