@@ -6,7 +6,7 @@ import { recalcTimings, formatTime } from '../utils/scriptAnalyzer';
 import {
   ChevronLeft, ChevronRight, Mic, Scissors, Image, Film, Download,
   Loader2, RefreshCw, Upload, Clock, CheckCircle2, AlertCircle,
-  Save, Trash2, Plus, X, FileText, Play,
+  Save, Trash2, Plus, X, FileText, Play, Video,
 } from 'lucide-react';
 
 
@@ -92,8 +92,9 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
 }
 
 // ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview }) {
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview, onGenerateVideo, videoGeneratingId }) {
   const isGenerating = generatingId === scene.id;
+  const isVideoGenerating = videoGeneratingId === scene.id;
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border-b border-gray-800">
@@ -137,11 +138,35 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
             Regenerate
           </button>
+          <button
+            onClick={() => onGenerateVideo(scene.id)}
+            disabled={isVideoGenerating || isGenerating || !scene.image_url}
+            className="mt-1 w-full text-xs py-1 rounded bg-purple-900/40 hover:bg-purple-900/60 text-purple-400 border border-purple-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isVideoGenerating ? <Loader2 size={10} className="animate-spin" /> : <Video size={10} />}
+            {isVideoGenerating ? 'Generating\u2026' : scene.video_url ? 'Redo Video' : 'Gen Video'}
+          </button>
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-300 leading-relaxed line-clamp-4">{scene.text}</p>
           {scene.image_prompt && (
             <p className="text-xs text-gray-600 font-mono mt-2 line-clamp-2">{scene.image_prompt}</p>
+          )}
+          {scene.video_url && !isVideoGenerating && (
+            <div className="mt-2">
+              <video
+                src={scene.video_url}
+                controls
+                loop
+                className="w-full rounded-lg border border-purple-800/40 max-h-40"
+              />
+            </div>
+          )}
+          {isVideoGenerating && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-purple-400">
+              <Loader2 size={11} className="animate-spin" />
+              Generating video\u2026
+            </div>
           )}
         </div>
       </div>
@@ -179,8 +204,10 @@ export default function ProjectDetail() {
   const [generatingId, setGeneratingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const [videoGeneratingId, setVideoGeneratingId] = useState(null);
   const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
+  const videoPollRef = useRef(null);
 
   // Step 5
   const [renderProgress, setRenderProgress] = useState(null);
@@ -218,7 +245,10 @@ export default function ProjectDetail() {
         setStep(detectInitialStep(proj, scns));
       })
       .finally(() => setLoading(false));
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (videoPollRef.current) clearInterval(videoPollRef.current);
+    };
   }, [id]);
 
   function detectInitialStep(proj, scns) {
@@ -420,6 +450,37 @@ export default function ProjectDetail() {
       ));
     } catch (err) { setError(err.message); }
     finally { setGeneratingId(null); }
+  }
+
+  async function handleGenerateVideo(sceneId) {
+    if (videoPollRef.current) clearInterval(videoPollRef.current);
+    setVideoGeneratingId(sceneId);
+    setError('');
+    try {
+      const { job_id } = await api.generateVideo(sceneId);
+      await new Promise((resolve, reject) => {
+        videoPollRef.current = setInterval(async () => {
+          try {
+            const result = await api.getVideoStatus(job_id);
+            if (result.status === 'complete') {
+              clearInterval(videoPollRef.current);
+              setScenes(prev => prev.map(s =>
+                s.id === sceneId ? { ...s, video_url: result.video_url } : s
+              ));
+              resolve();
+            }
+            // else still pending — keep polling
+          } catch (e) {
+            clearInterval(videoPollRef.current);
+            reject(e);
+          }
+        }, 5000);
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setVideoGeneratingId(null);
+    }
   }
 
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -786,6 +847,8 @@ export default function ProjectDetail() {
                 onRegenerate={handleRegenerateImage}
                 generatingId={generatingId}
                 onPreview={setLightboxScene}
+                onGenerateVideo={handleGenerateVideo}
+                videoGeneratingId={videoGeneratingId}
               />
             ))}
           </div>

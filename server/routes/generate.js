@@ -381,4 +381,147 @@ router.post('/test-veo-i2v', authMiddleware, async (req, res) => {
   });
 });
 
+// -- Veo text-to-video ---------------------------------------------------------
+
+// POST /api/generate/video/:sceneId
+// Submits a Veo t2v job and returns the operation name as job_id.
+router.post('/video/:sceneId', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  const wt = getNextToken(db);
+  if (!wt) return res.status(429).json({ error: 'No active Bearer tokens — add a token in Settings' });
+
+  const settings = getSettings(db);
+  const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
+  const prompt = scene.image_prompt || scene.text;
+  const batchId = uuidv4();
+
+  const fetch = (await import('node-fetch')).default;
+  const body = {
+    mediaGenerationContext: { batchId },
+    clientContext: { projectId, tool: 'PINHOLE' },
+    requests: [{
+      aspectRatio: 'VIDEO_ASPECT_RATIO_PORTRAIT',
+      seed: Math.floor(Math.random() * 1000000),
+      textPrompt: { parts: [{ text: prompt }] },
+      videoModelKey: 'veo_3_1_t2v_fast_portrait_ultra',
+    }],
+    useV2ModelConfig: true,
+  };
+
+  let rawStatus, rawBody;
+  try {
+    const r = await fetch(
+      'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${wt.token.trim()}`,
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+    rawStatus = r.status;
+    rawBody = await r.text();
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
+  }
+
+  if (rawStatus === 429 || rawStatus === 403) {
+    markTokenRateLimited(db, wt.id, rawBody.slice(0, 200));
+    return res.status(rawStatus).json({ error: `Veo API error: ${rawStatus}`, details: rawBody.slice(0, 500) });
+  }
+  if (rawStatus < 200 || rawStatus >= 300) {
+    return res.status(rawStatus).json({ error: `Veo API error: ${rawStatus}`, details: rawBody.slice(0, 500) });
+  }
+
+  let data;
+  try { data = JSON.parse(rawBody); } catch { return res.status(502).json({ error: 'Invalid JSON from Veo API', raw: rawBody.slice(0, 500) }); }
+
+  // Google LRO: response has a `name` field like "operations/abc123"
+  // Also handle arrays: { operations: [{ name: '...' }] }
+  const operationName = data?.name
+    || data?.operations?.[0]?.name
+    || batchId;
+
+  db.prepare('UPDATE scenes SET veo_job_id = ? WHERE id = ?').run(operationName, scene.id);
+  markTokenUsed(db, wt.id);
+
+  res.json({ job_id: operationName, batchId });
+});
+
+// GET /api/generate/video-status/:jobId
+// Polls the Veo operation status. Returns { status: 'pending'|'complete', video_url }.
+router.get('/video-status/:jobId', authMiddleware, async (req, res) => {
+  const jobId = decodeURIComponent(req.params.jobId);
+  const db = getDb();
+
+  // Check if already saved to DB
+  const scene = db.prepare('SELECT * FROM scenes WHERE veo_job_id = ?').get(jobId);
+  if (scene?.video_url) {
+    return res.json({ status: 'complete', video_url: scene.video_url });
+  }
+
+  const wt = getNextToken(db);
+  if (!wt) return res.status(429).json({ error: 'No active Bearer tokens' });
+
+  const fetch = (await import('node-fetch')).default;
+  let rawStatus, rawBody;
+  try {
+    const r = await fetch(
+      `https://aisandbox-pa.googleapis.com/v1/${jobId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${wt.token.trim()}`,
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      }
+    );
+    rawStatus = r.status;
+    rawBody = await r.text();
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
+  }
+
+  if (rawStatus < 200 || rawStatus >= 300) {
+    return res.status(rawStatus).json({ error: `Veo status error: ${rawStatus}`, details: rawBody.slice(0, 500) });
+  }
+
+  let data;
+  try { data = JSON.parse(rawBody); } catch { return res.status(502).json({ error: 'Invalid JSON from Veo status API' }); }
+
+  if (!data.done) return res.json({ status: 'pending' });
+
+  // Extract video URL — try several known response shapes
+  const fifeUrl =
+    data?.response?.media?.[0]?.video?.generatedVideo?.fifeUrl ||
+    data?.response?.media?.[0]?.video?.fifeUrl ||
+    data?.response?.operations?.[0]?.response?.media?.[0]?.video?.generatedVideo?.fifeUrl ||
+    data?.media?.[0]?.video?.generatedVideo?.fifeUrl ||
+    data?.media?.[0]?.video?.fifeUrl;
+
+  if (!fifeUrl) {
+    // Done but no URL yet — treat as still pending and return raw for debugging
+    console.warn('[veo-status] done=true but no fifeUrl found, response:', JSON.stringify(data).slice(0, 500));
+    return res.json({ status: 'pending', _debug: data });
+  }
+
+  if (scene) {
+    db.prepare('UPDATE scenes SET video_url = ? WHERE id = ?').run(fifeUrl, scene.id);
+  }
+
+  res.json({ status: 'complete', video_url: fifeUrl });
+});
+
 module.exports = router;

@@ -70,6 +70,10 @@ export const api = {
   saveImage: (sceneId, fifeUrl) => request('POST', '/generate/save-image', { sceneId, fifeUrl }),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
 
+  // Video generation (Veo t2v)
+  generateVideo: (sceneId) => request('POST', `/generate/video/${sceneId}`),
+  getVideoStatus: (jobId) => request('GET', `/generate/video-status/${encodeURIComponent(jobId)}`),
+
   // Flow tokens (stored in whisk_tokens table, same API paths)
   getWhiskTokens: () => request('GET', '/generate/whisk-tokens'),
   addWhiskToken: (label, token, projectId) => request('POST', '/generate/whisk-tokens', { label, token, ...(projectId ? { project_id: projectId } : {}) }),
