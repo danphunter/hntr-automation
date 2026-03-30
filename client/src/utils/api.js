@@ -69,8 +69,6 @@ export const api = {
   generateImage: (sceneId) => request('POST', `/generate/image/${sceneId}`),
   saveImage: (sceneId, fifeUrl) => request('POST', '/generate/save-image', { sceneId, fifeUrl }),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
-
-  // Video generation (Veo t2v)
   generateVideo: (sceneId) => request('POST', `/generate/video/${sceneId}`),
   getVideoStatus: (jobId) => request('GET', `/generate/video-status/${encodeURIComponent(jobId)}`),
 

@@ -9,7 +9,9 @@ const { getNextToken, markTokenUsed, markTokenRateLimited } = require('../utils/
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
+const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
+if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
 const FLOW_PROJECT_ID_DEFAULT = 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
 
@@ -307,78 +309,176 @@ router.post('/whisk-tokens/:id/reset', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
-// TEMP TEST: POST /api/generate/test-veo-i2v
-// Grabs the best active token + a scene with a generated image, fires i2v without recaptchaContext.
-// Pass optional ?mediaId=xxx in query to override the image reference.
-router.post('/test-veo-i2v', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+// POST /api/generate/video/:sceneId — submit a Veo t2v job
+router.post('/video/:sceneId', authMiddleware, async (req, res) => {
   const db = getDb();
+  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
   const wt = getNextToken(db);
-  if (!wt) return res.status(400).json({ error: 'No active tokens in DB' });
+  if (!wt) return res.status(429).json({ error: 'No active Bearer tokens — add a token in Settings' });
 
   const settings = getSettings(db);
   const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
-
-  // Use a mediaId from query, body, or grab one from a recent Flow-generated scene
-  let mediaId = req.query.mediaId || req.body.mediaId;
-  if (!mediaId) {
-    // Try to find a scene whose image was generated via Flow (fifeUrl stored as image_url)
-    const scene = db.prepare(`SELECT * FROM scenes WHERE image_url IS NOT NULL ORDER BY ROWID DESC LIMIT 1`).get();
-    if (scene) {
-      // The fifeUrl path contains the media id — try to parse it, or just use image_url as a signal
-      mediaId = scene.image_url; // fallback: just use whatever we have so we can see the auth error shape
-    }
-  }
-
+  const videoPrompt = scene.image_prompt || scene.text;
   const batchId = uuidv4();
+
   const body = {
     mediaGenerationContext: { batchId },
-    clientContext: {
-      projectId,
-      tool: 'PINHOLE',
-    },
+    clientContext: { projectId, tool: 'PINHOLE' },
     requests: [{
       aspectRatio: 'VIDEO_ASPECT_RATIO_PORTRAIT',
       metadata: {},
       seed: Math.floor(Math.random() * 1000000),
-      imageInput: { mediaId: mediaId || 'test-media-id' },
-      videoModelKey: 'veo_3_1_i2v_s_fast_ultra',
+      textInput: { structuredPrompt: { parts: [{ text: videoPrompt }] } },
+      videoModelKey: 'veo_3_1_t2v_fast_portrait_ultra',
     }],
     useV2ModelConfig: true,
   };
 
   const fetch = (await import('node-fetch')).default;
-  let rawStatus, rawBody;
   try {
-    const r = await fetch(
-      'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoImages',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${wt.token.trim()}`,
-          'origin': 'https://labs.google',
-          'referer': 'https://labs.google/',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-        body: JSON.stringify(body),
-      }
-    );
-    rawStatus = r.status;
-    rawBody = await r.text();
-  } catch (err) {
-    return res.json({ error: err.message, token_label: wt.label, projectId, batchId });
-  }
+    const r = await fetch('https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${wt.token.trim()}`,
+        'origin': 'https://labs.google',
+        'referer': 'https://labs.google/',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      body: JSON.stringify(body),
+    });
 
-  res.json({
-    http_status: rawStatus,
-    token_label: wt.label,
-    projectId,
-    batchId,
-    mediaId_sent: mediaId || 'test-media-id',
-    response_body: (() => { try { return JSON.parse(rawBody); } catch { return rawBody; } })(),
-    request_body_sent: body,
-  });
+    if (r.status === 429 || r.status === 403) {
+      markTokenRateLimited(db, wt.id, `HTTP ${r.status}`);
+      return res.status(429).json({ error: 'Token rate limited — try again or add a fresh token' });
+    }
+    if (!r.ok) {
+      const text = await r.text();
+      console.error('[veo t2v] Submit error:', r.status, text.slice(0, 300));
+      return res.status(502).json({ error: `Veo error ${r.status}: ${text.slice(0, 200)}` });
+    }
+
+    const data = await r.json();
+    console.log('[veo t2v] Job submitted batchId=%s response:', batchId, JSON.stringify(data).slice(0, 300));
+    markTokenUsed(db, wt.id);
+
+    // Store batchId on the scene so the status endpoint can track it
+    db.prepare('UPDATE scenes SET video_job_id = ?, video_url = NULL WHERE id = ?').run(batchId, scene.id);
+
+    res.json({ batchId, prompt: videoPrompt });
+  } catch (err) {
+    console.error('[veo t2v] Submit fetch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/generate/video-status/:batchId — poll job; downloads + saves video when done
+router.get('/video-status/:batchId', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const { batchId } = req.params;
+
+  // Check if already done
+  const scene = db.prepare('SELECT * FROM scenes WHERE video_job_id = ?').get(batchId);
+  if (!scene) return res.status(404).json({ error: 'Job not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  if (scene.video_url) return res.json({ status: 'complete', video_url: scene.video_url });
+
+  // Poll Veo
+  const wt = getNextToken(db);
+  if (!wt) return res.status(429).json({ error: 'No active tokens for status check' });
+
+  const fetch = (await import('node-fetch')).default;
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${wt.token.trim()}`,
+    'origin': 'https://labs.google',
+    'referer': 'https://labs.google/',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  };
+
+  try {
+    const pollRes = await fetch('https://aisandbox-pa.googleapis.com/v1/video:batchGetVideoStatus', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ batchIds: [batchId] }),
+    });
+
+    if (!pollRes.ok) {
+      const text = await pollRes.text();
+      console.error('[veo status] Poll error:', pollRes.status, text.slice(0, 200));
+      return res.json({ status: 'processing' }); // don't error out — keep polling
+    }
+
+    const pollData = await pollRes.json();
+    const batchEntry = pollData.batches?.[0] || pollData.results?.[0] || pollData.statuses?.[0] || pollData;
+
+    const isDone =
+      batchEntry.done === true ||
+      batchEntry.status === 'COMPLETE' || batchEntry.status === 'SUCCEEDED' ||
+      batchEntry.state === 'DONE' || batchEntry.state === 'SUCCEEDED';
+
+    if (!isDone) {
+      const state = batchEntry.status || batchEntry.state || batchEntry.done;
+      console.log(`[veo status] batchId=${batchId} state=${state}`);
+      return res.json({ status: 'processing', state });
+    }
+
+    console.log('[veo status] Done! batchId=%s response shape:', batchId, JSON.stringify(pollData).slice(0, 500));
+
+    // Extract video bytes or URL from the (unknown) response shape
+    const resp = batchEntry.response || batchEntry;
+    const candidates = [
+      ...(resp.videos || []),
+      ...(resp.media || []),
+      ...(resp.generatedSamples || []),
+      ...(resp.generateVideoResponse?.generatedSamples || []),
+      ...(resp.results || []),
+      ...(resp.predictions || []),
+    ];
+
+    let videoBuffer = null;
+    for (const item of candidates) {
+      const vid = item.video || item;
+      if (vid.bytesBase64Encoded) { videoBuffer = Buffer.from(vid.bytesBase64Encoded, 'base64'); break; }
+      const url = vid.uri || vid.videoUri || vid.url || vid.downloadUri || item.videoUri || item.uri;
+      if (url) {
+        const dl = await fetch(url, { headers: { 'Authorization': `Bearer ${wt.token.trim()}` } });
+        if (dl.ok) { videoBuffer = await dl.buffer(); break; }
+        console.error('[veo status] Failed to download from url:', dl.status);
+      }
+    }
+
+    if (!videoBuffer) {
+      // Return the raw done-response so we can debug the shape
+      console.error('[veo status] Unrecognised done response:', JSON.stringify(resp).slice(0, 500));
+      return res.json({ status: 'complete_unknown_shape', raw: JSON.stringify(pollData).slice(0, 1000) });
+    }
+
+    const filename = `vid-${uuidv4()}.mp4`;
+    const vidPath = path.join(VIDEOS_DIR, filename);
+    fs.writeFileSync(vidPath, videoBuffer);
+    const videoUrl = `/api/generate/video-file/${filename}`;
+    db.prepare('UPDATE scenes SET video_url = ? WHERE id = ?').run(videoUrl, scene.id);
+
+    res.json({ status: 'complete', video_url: videoUrl });
+  } catch (err) {
+    console.error('[veo status] Error:', err.message);
+    res.json({ status: 'processing' }); // keep polling on transient errors
+  }
+});
+
+// GET /api/generate/video-file/:filename
+router.get('/video-file/:filename', (req, res) => {
+  const vidPath = path.join(VIDEOS_DIR, path.basename(req.params.filename));
+  if (!vidPath.startsWith(VIDEOS_DIR)) return res.status(404).json({ error: 'Not found' });
+  if (!fs.existsSync(vidPath)) return res.status(404).json({ error: 'Not found' });
+  res.sendFile(vidPath);
 });
 
 // -- Veo text-to-video ---------------------------------------------------------

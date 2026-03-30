@@ -6,7 +6,7 @@ import { recalcTimings, formatTime } from '../utils/scriptAnalyzer';
 import {
   ChevronLeft, ChevronRight, Mic, Scissors, Image, Film, Download,
   Loader2, RefreshCw, Upload, Clock, CheckCircle2, AlertCircle,
-  Save, Trash2, Plus, X, FileText, Play, Video,
+  Save, Trash2, Plus, X, FileText, Play,
 } from 'lucide-react';
 
 
@@ -18,7 +18,7 @@ const STEPS = [
   { id: 5, label: 'Render',          icon: Film },
 ];
 
-// ââ Scene card for Step 3 (transcription review) ââââââââââââââââââââââââââââââ
+// -- Scene card for Step 3 (transcription review) ----------------------------
 function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [localText, setLocalText] = useState(scene.text);
@@ -91,10 +91,10 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
   );
 }
 
-// ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview, onGenerateVideo, videoGeneratingId }) {
+// -- Scene card for Step 4 (image generation) --------------------------------
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview, onGenerateVideo, videoPollingId }) {
   const isGenerating = generatingId === scene.id;
-  const isVideoGenerating = videoGeneratingId === scene.id;
+  const isVideoPolling = videoPollingId === scene.id;
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border-b border-gray-800">
@@ -138,43 +138,39 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview, o
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
             Regenerate
           </button>
-          <button
-            onClick={() => onGenerateVideo(scene.id)}
-            disabled={isVideoGenerating || isGenerating || !scene.image_url}
-            className="mt-1 w-full text-xs py-1 rounded bg-purple-900/40 hover:bg-purple-900/60 text-purple-400 border border-purple-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isVideoGenerating ? <Loader2 size={10} className="animate-spin" /> : <Video size={10} />}
-            {isVideoGenerating ? 'Generating\u2026' : scene.video_url ? 'Redo Video' : 'Gen Video'}
-          </button>
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-300 leading-relaxed line-clamp-4">{scene.text}</p>
           {scene.image_prompt && (
             <p className="text-xs text-gray-600 font-mono mt-2 line-clamp-2">{scene.image_prompt}</p>
           )}
-          {scene.video_url && !isVideoGenerating && (
-            <div className="mt-2">
-              <video
-                src={scene.video_url}
-                controls
-                loop
-                className="w-full rounded-lg border border-purple-800/40 max-h-40"
-              />
-            </div>
-          )}
-          {isVideoGenerating && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-purple-400">
-              <Loader2 size={11} className="animate-spin" />
-              Generating video\u2026
-            </div>
-          )}
+          {/* Video section */}
+          {scene.video_url ? (
+            <video
+              src={scene.video_url}
+              controls
+              loop
+              className="mt-2 w-full rounded-lg border border-gray-700"
+              style={{ maxHeight: '140px' }}
+            />
+          ) : scene.image_url ? (
+            <button
+              onClick={() => onGenerateVideo(scene.id)}
+              disabled={isVideoPolling || isGenerating}
+              className="mt-2 text-xs py-1 px-2 rounded bg-purple-900/40 hover:bg-purple-900/60 text-purple-400 border border-purple-800/40 transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isVideoPolling
+                ? <><Loader2 size={10} className="animate-spin" /> Generating video...</>
+                : <><Film size={10} /> Generate Video</>}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
 
-// ââ Main component ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Main component ----------------------------------------------------------
 export default function ProjectDetail() {
   const { id } = useParams();
   const { isAdmin } = useAuth();
@@ -204,9 +200,11 @@ export default function ProjectDetail() {
   const [generatingId, setGeneratingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
-  const [videoGeneratingId, setVideoGeneratingId] = useState(null);
   const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
+
+  // Video generation
+  const [videoPollingId, setVideoPollingId] = useState(null); // sceneId currently polling
   const videoPollRef = useRef(null);
 
   // Step 5
@@ -228,7 +226,10 @@ export default function ProjectDetail() {
     }
   }, [scenes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // Cleanup video poll on unmount
+  useEffect(() => () => { if (videoPollRef.current) clearInterval(videoPollRef.current); }, []);
+
+  // -- Initial load -----------------------------------------------------------
   useEffect(() => {
     Promise.all([api.getProject(id), api.getStyles()])
       .then(([proj, stls]) => {
@@ -236,7 +237,6 @@ export default function ProjectDetail() {
         setProject(proj);
         setScenes(scns);
         setEditTitle(proj.title || '');
-        // style_id may be null for older projects - fall back to matching by style name
         const styleId = proj.style_id
           ? String(proj.style_id)
           : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
@@ -245,10 +245,7 @@ export default function ProjectDetail() {
         setStep(detectInitialStep(proj, scns));
       })
       .finally(() => setLoading(false));
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (videoPollRef.current) clearInterval(videoPollRef.current);
-    };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [id]);
 
   function detectInitialStep(proj, scns) {
@@ -258,7 +255,7 @@ export default function ProjectDetail() {
     return 5;
   }
 
-  // ââ Step 3: auto-transcribe on entry ââââââââââââââââââââââââââââââââââââââââ
+  // -- Step 3: auto-transcribe on entry --------------------------------------
   useEffect(() => {
     if (
       step === 3 &&
@@ -272,7 +269,7 @@ export default function ProjectDetail() {
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ââ Step 4: auto-generate images on entry âââââââââââââââââââââââââââââââââââ
+  // -- Step 4: auto-generate images on entry ---------------------------------
   useEffect(() => {
     if (step === 4 && !autoGenTriggered.current && !generatingAll) {
       const currentScenes = scenesRef.current;
@@ -283,7 +280,7 @@ export default function ProjectDetail() {
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ââ Shared helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Shared helpers --------------------------------------------------------
   async function loadProject() {
     const data = await api.getProject(id);
     setProject(data);
@@ -291,7 +288,7 @@ export default function ProjectDetail() {
     return data;
   }
 
-  // ââ Step 1 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Step 1 ----------------------------------------------------------------
   async function handleSaveDetails() {
     setSavingDetails(true);
     setError('');
@@ -307,7 +304,7 @@ export default function ProjectDetail() {
     finally { setSavingDetails(false); }
   }
 
-  // ââ Step 2 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Step 2 ----------------------------------------------------------------
   async function handleUploadAudio() {
     if (!audioFile) return;
     setUploadingAudio(true);
@@ -316,7 +313,6 @@ export default function ProjectDetail() {
       await api.uploadAudio(id, audioFile);
       await loadProject();
       setAudioFile(null);
-      // Reset transcription state for new audio
       transcribeTriggered.current = false;
       setScenes([]);
       setStep(3);
@@ -324,15 +320,12 @@ export default function ProjectDetail() {
     finally { setUploadingAudio(false); }
   }
 
-  // ââ Step 3 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Step 3 ----------------------------------------------------------------
   async function handleTranscribe() {
     setTranscribing(true);
     setError('');
     try {
-      // Start the job (returns immediately with { status: 'processing', jobId })
       await api.transcribeAudio(id);
-
-      // Poll every 3 seconds until done
       await new Promise((resolve, reject) => {
         const interval = setInterval(async () => {
           try {
@@ -346,7 +339,6 @@ export default function ProjectDetail() {
               clearInterval(interval);
               reject(new Error(result.message || 'Transcription failed'));
             }
-            // else still processing - keep polling
           } catch (e) {
             clearInterval(interval);
             reject(e);
@@ -393,7 +385,7 @@ export default function ProjectDetail() {
     } catch (err) { setError(err.message); }
   }
 
-  // ââ Step 4 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Step 4 ----------------------------------------------------------------
 
   async function handleAutoGenerate(initialScenes) {
     setGeneratingAll(true);
@@ -401,7 +393,6 @@ export default function ProjectDetail() {
     try {
       let workingScenes = initialScenes || scenesRef.current;
 
-      // Generate prompts if any scene is missing one
       if (workingScenes.some(s => !s.image_prompt)) {
         setGeneratingPrompts(true);
         try {
@@ -416,7 +407,6 @@ export default function ProjectDetail() {
         }
       }
 
-      // Generate images for pending scenes
       const pending = workingScenes.filter(s => s.status !== 'generated');
       setGenProgress({ current: 0, total: pending.length });
 
@@ -446,44 +436,46 @@ export default function ProjectDetail() {
       await api.saveScenes(id, scenes);
       const result = await api.generateImage(sceneId);
       setScenes(prev => prev.map(s =>
-        s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated', video_url: null, video_status: 'pending' } : s
+        s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated', video_url: null } : s
       ));
     } catch (err) { setError(err.message); }
     finally { setGeneratingId(null); }
   }
 
   async function handleGenerateVideo(sceneId) {
-    if (videoPollRef.current) clearInterval(videoPollRef.current);
-    setVideoGeneratingId(sceneId);
     setError('');
+    if (videoPollRef.current) clearInterval(videoPollRef.current);
     try {
       const { job_id } = await api.generateVideo(sceneId);
-      await new Promise((resolve, reject) => {
-        videoPollRef.current = setInterval(async () => {
-          try {
-            const result = await api.getVideoStatus(job_id);
-            if (result.status === 'complete') {
-              clearInterval(videoPollRef.current);
-              setScenes(prev => prev.map(s =>
-                s.id === sceneId ? { ...s, video_url: result.video_url } : s
-              ));
-              resolve();
-            }
-            // else still pending — keep polling
-          } catch (e) {
+      setVideoPollingId(sceneId);
+
+      videoPollRef.current = setInterval(async () => {
+        try {
+          const result = await api.getVideoStatus(job_id);
+          if (result.status === 'complete') {
             clearInterval(videoPollRef.current);
-            reject(e);
+            setVideoPollingId(null);
+            setScenes(prev => prev.map(s =>
+              s.id === sceneId ? { ...s, video_url: result.video_url } : s
+            ));
+          } else if (result.status === 'complete_unknown_shape') {
+            clearInterval(videoPollRef.current);
+            setVideoPollingId(null);
+            setError(`Video generation done but response shape unknown — check server logs. Raw: ${result.raw?.slice(0, 200)}`);
           }
-        }, 5000);
-      });
+          // status === 'processing' — keep polling
+        } catch (err) {
+          clearInterval(videoPollRef.current);
+          setVideoPollingId(null);
+          setError(`Video poll error: ${err.message}`);
+        }
+      }, 8000);
     } catch (err) {
       setError(err.message);
-    } finally {
-      setVideoGeneratingId(null);
     }
   }
 
-  // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Step 5 ----------------------------------------------------------------
   async function handleStartRender() {
     setError('');
     try {
@@ -502,12 +494,12 @@ export default function ProjectDetail() {
     } catch (err) { setError(err.message); }
   }
 
-  // ââ Computed ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Computed --------------------------------------------------------------
   const totalDuration = scenes.reduce((a, s) => a + (s.duration || 0), 0);
   const imagesReady = scenes.filter(s => s.status === 'generated').length;
   const selectedStyle = styles.find(s => String(s.id) === String(editStyleId));
 
-  // ââ Render ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // -- Render ----------------------------------------------------------------
   if (loading) return (
     <div className="flex items-center justify-center py-24">
       <Loader2 size={32} className="animate-spin text-indigo-500" />
@@ -524,7 +516,7 @@ export default function ProjectDetail() {
   return (
     <div className="p-6 max-w-3xl mx-auto">
 
-      {/* ââ Page header âââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* Page header */}
       <div className="flex items-center gap-3 mb-6">
         <Link to={isAdmin ? '/admin' : '/'} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
           <ChevronLeft size={20} />
@@ -542,7 +534,7 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* ââ Wizard progress bar âââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* Wizard progress bar */}
       <div className="flex items-center mb-8">
         {STEPS.map((s, i) => {
           const isDone    = step > s.id;
@@ -574,7 +566,7 @@ export default function ProjectDetail() {
         })}
       </div>
 
-      {/* ââ Global error banner âââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* Global error banner */}
       {error && (
         <div className="flex items-start gap-2 text-red-400 text-sm bg-red-900/20 border border-red-800/40 rounded-lg p-3 mb-4">
           <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
@@ -583,9 +575,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 1 - Project Details                                            */}
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* STEP 1 - Project Details */}
       {step === 1 && (
         <div className="card p-6 space-y-5">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -630,9 +620,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 2 - Upload Audio                                               */}
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* STEP 2 - Upload Audio */}
       {step === 2 && (
         <div className="card p-6 space-y-4">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -699,16 +687,13 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 3 - Transcription                                              */}
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* STEP 3 - Transcription */}
       {step === 3 && (
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Scissors size={18} className="text-indigo-400" /> Transcription
           </h2>
 
-          {/* Transcribing state */}
           {transcribing && (
             <div className="card p-10 text-center">
               <Loader2 size={36} className="animate-spin text-indigo-500 mx-auto mb-4" />
@@ -719,7 +704,6 @@ export default function ProjectDetail() {
             </div>
           )}
 
-          {/* Scenes list */}
           {!transcribing && scenes.length > 0 && (
             <>
               <p className="text-sm text-gray-400">
@@ -756,7 +740,6 @@ export default function ProjectDetail() {
             </>
           )}
 
-          {/* Empty / error state */}
           {!transcribing && scenes.length === 0 && (
             <div className="card p-8 text-center space-y-3">
               <AlertCircle size={28} className="text-yellow-500 mx-auto" />
@@ -772,9 +755,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 4 - Image Generation                                           */}
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* STEP 4 - Image Generation */}
       {step === 4 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -784,7 +765,6 @@ export default function ProjectDetail() {
             <span className="text-sm text-gray-500">{imagesReady}/{scenes.length} ready</span>
           </div>
 
-          {/* Generation progress indicator */}
           {(generatingPrompts || generatingAll) && (
             <div className="card p-4 flex items-center gap-3">
               <Loader2 size={18} className="animate-spin text-indigo-400 flex-shrink-0" />
@@ -806,7 +786,6 @@ export default function ProjectDetail() {
             </div>
           )}
 
-          {/* Regenerate prompts button — forces re-run even if prompts already exist */}
           {!generatingAll && !generatingPrompts && (
             <button
               onClick={async () => {
@@ -827,7 +806,6 @@ export default function ProjectDetail() {
             </button>
           )}
 
-          {/* Resume button when generation was interrupted */}
           {!generatingAll && !generatingPrompts && scenes.some(s => s.status !== 'generated') && imagesReady > 0 && (
             <button
               onClick={() => { autoGenTriggered.current = false; handleAutoGenerate(); }}
@@ -837,7 +815,6 @@ export default function ProjectDetail() {
             </button>
           )}
 
-          {/* Scene cards */}
           <div className="space-y-3">
             {scenes.map((scene, i) => (
               <ImageSceneCard
@@ -848,7 +825,7 @@ export default function ProjectDetail() {
                 generatingId={generatingId}
                 onPreview={setLightboxScene}
                 onGenerateVideo={handleGenerateVideo}
-                videoGeneratingId={videoGeneratingId}
+                videoPollingId={videoPollingId}
               />
             ))}
           </div>
@@ -867,16 +844,13 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
-      {/* STEP 5 - Render & Download                                          */}
-      {/* ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* STEP 5 - Render & Download */}
       {step === 5 && (
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Film size={18} className="text-indigo-400" /> Render & Download
           </h2>
 
-          {/* Summary */}
           <div className="card p-4 space-y-2 text-sm">
             <div className="flex justify-between text-gray-400">
               <span>Scenes</span>
@@ -900,7 +874,6 @@ export default function ProjectDetail() {
             </div>
           </div>
 
-          {/* Placeholder toggle when some images are missing */}
           {imagesReady < scenes.length && (
             <label className="card p-3 flex items-center gap-3 cursor-pointer hover:border-gray-700 transition-colors">
               <input
@@ -916,8 +889,6 @@ export default function ProjectDetail() {
             </label>
           )}
 
-
-          {/* Render progress */}
           {renderProgress && (
             <div className="card p-4">
               <div className="flex items-center justify-between mb-2">
@@ -941,14 +912,12 @@ export default function ProjectDetail() {
             </div>
           )}
 
-          {/* Warnings */}
           {!project.audio_filename && (
             <p className="text-xs text-yellow-500 flex items-center gap-1.5">
               <AlertCircle size={13} /> Audio is required before rendering
             </p>
           )}
 
-          {/* Actions */}
           <div className="flex gap-3">
             <button onClick={() => setStep(4)} className="btn-secondary flex items-center gap-2">
               <ChevronLeft size={15} /> Back
