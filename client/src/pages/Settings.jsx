@@ -237,6 +237,13 @@ export default function Settings() {
           </p>
         </Section>
 
+        <Section title="Image Generation — Browser Validation">
+          <ApiKeyField label="Browser Validation Token" keyName="browser_validation" values={values} onChange={onChange} hint="x-browser-validation header value" />
+          <p className="text-xs text-gray-500">
+            Copy the <code className="text-gray-400">x-browser-validation</code> header value from a Flow image generation request in your browser's network tab. Required to avoid reCAPTCHA 403 errors when generating from Railway's IP.
+          </p>
+        </Section>
+
         <button
           type="submit"
           disabled={saving}
