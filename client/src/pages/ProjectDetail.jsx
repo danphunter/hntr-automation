@@ -242,17 +242,6 @@ export default function ProjectDetail() {
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ââ Step 4: auto-generate images on entry âââââââââââââââââââââââââââââââââââ
-  useEffect(() => {
-    if (step === 4 && !autoGenTriggered.current && !generatingAll) {
-      const currentScenes = scenesRef.current;
-      if (currentScenes.length > 0 && currentScenes.some(s => s.status !== 'generated')) {
-        autoGenTriggered.current = true;
-        handleAutoGenerate(currentScenes);
-      }
-    }
-  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ââ Shared helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   async function loadProject() {
     const data = await api.getProject(id);
