@@ -290,7 +290,12 @@ router.put('/whisk-tokens/:id', authMiddleware, (req, res) => {
   const { label, status, project_id } = req.body;
   const cleanToken = req.body.token ? req.body.token.trim().replace(/^Bearer\s+/i, '') : undefined;
   const cleanProjectId = project_id ? project_id.trim() : undefined;
-  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status), project_id = COALESCE(?, project_id) WHERE id = ?').run(label, cleanToken, status, cleanProjectId, req.params.id);
+  if (cleanToken) {
+    // New token value submitted — reset all stale state
+    db.prepare("UPDATE whisk_tokens SET label = COALESCE(?, label), token = ?, status = 'active', last_error = NULL, usage_count = 0, rate_limited_until = NULL, project_id = COALESCE(?, project_id) WHERE id = ?").run(label, cleanToken, cleanProjectId, req.params.id);
+  } else {
+    db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), status = COALESCE(?, status), project_id = COALESCE(?, project_id) WHERE id = ?').run(label, status, cleanProjectId, req.params.id);
+  }
   const t = db.prepare('SELECT id, label, project_id, usage_count, status, last_used, last_error, rate_limited_until, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
   res.json(t);
 });
