@@ -179,7 +179,6 @@ export default function ProjectDetail() {
   const [generatingId, setGeneratingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
-  const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
 
   // Step 5
@@ -242,6 +241,10 @@ export default function ProjectDetail() {
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> efd1665 (Trigger image generation directly from Generate Images button)
   // ââ Shared helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   async function loadProject() {
     const data = await api.getProject(id);
@@ -347,8 +350,11 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      autoGenTriggered.current = false;
       setStep(4);
+      const toGenerate = scenes.filter(s => s.status !== 'generated');
+      if (toGenerate.length > 0) {
+        handleAutoGenerate(scenes);
+      }
     } catch (err) { setError(err.message); }
   }
 
@@ -758,7 +764,7 @@ export default function ProjectDetail() {
           {/* Resume button when generation was interrupted */}
           {!generatingAll && !generatingPrompts && scenes.some(s => s.status !== 'generated') && imagesReady > 0 && (
             <button
-              onClick={() => { autoGenTriggered.current = false; handleAutoGenerate(); }}
+              onClick={() => handleAutoGenerate()}
               className="btn-secondary text-sm flex items-center gap-2"
             >
               <RefreshCw size={13} /> Resume Generation ({scenes.length - imagesReady} remaining)
