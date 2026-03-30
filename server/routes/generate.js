@@ -307,4 +307,78 @@ router.post('/whisk-tokens/:id/reset', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
+// TEMP TEST: POST /api/generate/test-veo-i2v
+// Grabs the best active token + a scene with a generated image, fires i2v without recaptchaContext.
+// Pass optional ?mediaId=xxx in query to override the image reference.
+router.post('/test-veo-i2v', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  const db = getDb();
+  const wt = getNextToken(db);
+  if (!wt) return res.status(400).json({ error: 'No active tokens in DB' });
+
+  const settings = getSettings(db);
+  const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
+
+  // Use a mediaId from query, body, or grab one from a recent Flow-generated scene
+  let mediaId = req.query.mediaId || req.body.mediaId;
+  if (!mediaId) {
+    // Try to find a scene whose image was generated via Flow (fifeUrl stored as image_url)
+    const scene = db.prepare(`SELECT * FROM scenes WHERE image_url IS NOT NULL ORDER BY ROWID DESC LIMIT 1`).get();
+    if (scene) {
+      // The fifeUrl path contains the media id — try to parse it, or just use image_url as a signal
+      mediaId = scene.image_url; // fallback: just use whatever we have so we can see the auth error shape
+    }
+  }
+
+  const batchId = uuidv4();
+  const body = {
+    mediaGenerationContext: { batchId },
+    clientContext: {
+      projectId,
+      tool: 'PINHOLE',
+    },
+    requests: [{
+      aspectRatio: 'VIDEO_ASPECT_RATIO_PORTRAIT',
+      metadata: {},
+      seed: Math.floor(Math.random() * 1000000),
+      imageInput: { mediaId: mediaId || 'test-media-id' },
+      videoModelKey: 'veo_3_1_i2v_s_fast_ultra',
+    }],
+    useV2ModelConfig: true,
+  };
+
+  const fetch = (await import('node-fetch')).default;
+  let rawStatus, rawBody;
+  try {
+    const r = await fetch(
+      'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoImages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${wt.token.trim()}`,
+          'origin': 'https://labs.google',
+          'referer': 'https://labs.google/',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+    rawStatus = r.status;
+    rawBody = await r.text();
+  } catch (err) {
+    return res.json({ error: err.message, token_label: wt.label, projectId, batchId });
+  }
+
+  res.json({
+    http_status: rawStatus,
+    token_label: wt.label,
+    projectId,
+    batchId,
+    mediaId_sent: mediaId || 'test-media-id',
+    response_body: (() => { try { return JSON.parse(rawBody); } catch { return rawBody; } })(),
+    request_body_sent: body,
+  });
+});
+
 module.exports = router;
