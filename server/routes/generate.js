@@ -11,66 +11,78 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
-const FLOW_PROJECT_ID_DEFAULT = 'b3238f57-005c-42a4-82ae-3b2bd09f0f52';
-
 function getSettings(db) {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// -- Flow API ------------------------------------------------------------------
+// -- Gemini Imagen API ---------------------------------------------------------
 
-async function generateViaFlow(bearerToken, prompt, referenceIds, flowProjectId) {
+async function generateViaGemini(bearerToken, prompt) {
   const fetch = (await import('node-fetch')).default;
-  const clientContext = {
-    projectId: flowProjectId,
-    tool: 'PINHOLE',
-    sessionId: `;${Date.now()}`,
-  };
+
   const body = {
-    clientContext,
-    mediaGenerationContext: { batchId: uuidv4() },
-    useNewMedia: true,
-    requests: [{
-      clientContext,
-      imageModelName: 'NARWHAL',
-      imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
-      structuredPrompt: { parts: [{ text: prompt }] },
-      seed: Math.floor(Math.random() * 1000000),
-      imageInputs: (referenceIds || []).map(id => ({ imageInputType: 'IMAGE_INPUT_TYPE_REFERENCE', name: id })),
-    }],
+    instances: [{ prompt }],
+    parameters: {
+      sampleCount: 1,
+      aspectRatio: '16:9',
+      safetyFilterLevel: 'block_some',
+      personGeneration: 'allow_adult',
+    },
   };
+
   const res = await fetch(
-    `https://aisandbox-pa.googleapis.com/v1/projects/${flowProjectId}/flowMedia:batchGenerateImages`,
+    'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
     {
       method: 'POST',
       headers: {
-        'accept': '*/*',
-        'authorization': 'Bearer ' + bearerToken,
-        'content-type': 'application/json',
-        'origin': 'https://labs.google',
-        'referer': 'https://labs.google/',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + bearerToken,
       },
       body: JSON.stringify(body),
     }
   );
-  if (res.status === 429 || res.status === 403) {
+
+  if (res.status === 429) {
     const text = await res.text();
+    console.log('Gemini rate-limited:', res.status, text.slice(0, 500));
     throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
   }
+
+  if (res.status === 401 || res.status === 403) {
+    const text = await res.text();
+    console.log('Gemini auth error:', res.status, text.slice(0, 500));
+    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
+  }
+
   if (!res.ok) {
     const text = await res.text();
-    if (text.includes('PUBLIC_ERROR_UNSAFE_GENERATION')) throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
-    throw new Error(`FLOW_ERROR:${res.status}:${text.slice(0, 200)}`);
+    console.log('Gemini error:', res.status, text.slice(0, 500));
+    if (
+      text.includes('PROHIBITED_CONTENT') ||
+      text.includes('SAFETY') ||
+      text.includes('BLOCKED') ||
+      text.includes('blocked')
+    ) {
+      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
+    }
+    throw new Error(`GEMINI_ERROR:${res.status}:${text.slice(0, 200)}`);
   }
+
   const data = await res.json();
-  const fifeUrl = data?.media?.[0]?.image?.generatedImage?.fifeUrl;
-  if (!fifeUrl) return null;
-  const imgRes = await fetch(fifeUrl);
-  if (!imgRes.ok) throw new Error(`Failed to download image from fifeUrl: ${imgRes.status}`);
-  return await imgRes.buffer();
+
+  // Empty predictions array means safety filter blocked the prompt
+  if (data.predictions && data.predictions.length === 0) {
+    const reason = data.metadata?.filteredReason || 'Safety filter';
+    throw new Error(`UNSAFE_CONTENT:${reason}`);
+  }
+
+  const encoded = data?.predictions?.[0]?.bytesBase64Encoded;
+  if (!encoded) {
+    console.log('Gemini response missing bytesBase64Encoded:', JSON.stringify(data).slice(0, 500));
+    return null;
+  }
+  return Buffer.from(encoded, 'base64');
 }
 
 async function saveImageFromBuffer(buffer) {
@@ -90,16 +102,11 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
-  const settings = getSettings(db);
-
   let rawPrompt = scene.image_prompt || scene.text;
-  let referenceIds = [];
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
     if (style) {
       rawPrompt = `${style.prompt_prefix} ${rawPrompt} ${style.prompt_suffix}`.trim();
-      const refs = db.prepare('SELECT flow_media_id FROM style_references WHERE style_id = ? AND flow_media_id IS NOT NULL').all(project.style_id);
-      referenceIds = refs.map(r => r.flow_media_id);
     }
   }
 
@@ -119,15 +126,14 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
       return res.status(429).json({ error: msg, retry_after: retrySecs });
     }
     triedCount++;
-    const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
     try {
-      const buffer = await generateViaFlow(wt.token.trim(), prompt, referenceIds, projectId);
+      const buffer = await generateViaGemini(wt.token.trim(), prompt);
       if (buffer) {
         markTokenUsed(db, wt.id);
         imageBuffer = buffer;
         break;
       }
-      markTokenRateLimited(db, wt.id, 'Empty response from Flow');
+      markTokenRateLimited(db, wt.id, 'Empty response from Gemini');
     } catch (err) {
       if (err.message.startsWith('RATE_LIMITED')) {
         markTokenRateLimited(db, wt.id, err.message.slice(12));
