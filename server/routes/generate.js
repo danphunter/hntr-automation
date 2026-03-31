@@ -51,6 +51,7 @@ async function generateViaFlow(bearerToken, prompt, referenceIds, flowProjectId)
         'origin': 'https://labs.google',
         'referer': 'https://labs.google/',
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'x-browser-validation': 'G41Ld2zZUk0hyYZx+J5sgTeMu5o=',
       },
       body: JSON.stringify(body),
     }
@@ -80,29 +81,6 @@ async function saveImageFromBuffer(buffer) {
 }
 
 // -- Routes --------------------------------------------------------------------
-
-// POST /api/generate/save-image
-router.post('/save-image', authMiddleware, async (req, res) => {
-  const { sceneId, fifeUrl } = req.body;
-  if (!sceneId || !fifeUrl) return res.status(400).json({ error: 'sceneId and fifeUrl required' });
-  const db = getDb();
-  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(sceneId);
-  if (!scene) return res.status(404).json({ error: 'Scene not found' });
-  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
-  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-  try {
-    const fetch = (await import('node-fetch')).default;
-    const imgRes = await fetch(fifeUrl);
-    if (!imgRes.ok) return res.status(502).json({ error: `Failed to download image: ${imgRes.status}` });
-    const buffer = await imgRes.buffer();
-    const { filename, imgPath } = await saveImageFromBuffer(buffer);
-    const localUrl = `/api/generate/image-file/${filename}`;
-    db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?').run(localUrl, imgPath, 'generated', scene.id);
-    res.json({ image_url: localUrl });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // POST /api/generate/image/:sceneId
 router.post('/image/:sceneId', authMiddleware, async (req, res) => {

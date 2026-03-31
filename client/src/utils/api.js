@@ -67,7 +67,6 @@ export const api = {
 
   // Image generation
   generateImage: (sceneId) => request('POST', `/generate/image/${sceneId}`),
-  saveImage: (sceneId, fifeUrl) => request('POST', '/generate/save-image', { sceneId, fifeUrl }),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
   getFlowConfig: () => request('GET', '/generate/flow-config'),
   saveSceneImage: (sceneId, imageUrl) => request('POST', `/generate/scenes/${sceneId}/save-image`, { imageUrl }),
