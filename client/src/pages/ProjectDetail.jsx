@@ -180,6 +180,7 @@ export default function ProjectDetail() {
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const scenesRef = useRef([]);
+  const autoGenTriggered = useRef(false);
 
   // Step 5
   const [renderProgress, setRenderProgress] = useState(null);
@@ -350,11 +351,9 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
+      autoGenTriggered.current = true;
       setStep(4);
-      const toGenerate = scenes.filter(s => s.status !== 'generated');
-      if (toGenerate.length > 0) {
-        handleAutoGenerate(scenes);
-      }
+      handleAutoGenerate();
     } catch (err) { setError(err.message); }
   }
 
