@@ -20,7 +20,7 @@ function getSettings(db) {
 
 // -- Flow API ------------------------------------------------------------------
 
-async function generateViaFlow(bearerToken, prompt, referenceIds, flowProjectId) {
+async function generateViaFlow(bearerToken, prompt, referenceIds, flowProjectId, browserValidation) {
   const fetch = (await import('node-fetch')).default;
   const clientContext = {
     projectId: flowProjectId,
@@ -51,6 +51,7 @@ async function generateViaFlow(bearerToken, prompt, referenceIds, flowProjectId)
         'origin': 'https://labs.google',
         'referer': 'https://labs.google/',
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ...(browserValidation ? { 'x-browser-validation': browserValidation } : {}),
       },
       body: JSON.stringify(body),
     }
@@ -143,7 +144,7 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     triedCount++;
     const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
     try {
-      const buffer = await generateViaFlow(wt.token.trim(), prompt, referenceIds, projectId);
+      const buffer = await generateViaFlow(wt.token.trim(), prompt, referenceIds, projectId, settings.browser_validation);
       if (buffer) {
         markTokenUsed(db, wt.id);
         imageBuffer = buffer;

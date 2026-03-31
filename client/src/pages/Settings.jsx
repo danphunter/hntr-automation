@@ -237,6 +237,22 @@ export default function Settings() {
           </p>
         </Section>
 
+        <Section title="Image Generation — Flow">
+          <div>
+            <label className="label">Flow Browser Validation</label>
+            <input
+              type="text"
+              className="input font-mono text-sm"
+              value={values.browser_validation || ''}
+              onChange={e => onChange('browser_validation', e.target.value)}
+              placeholder="x-browser-validation token (optional)"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Optional. If set, sent as the <code>x-browser-validation</code> header on all Flow image generation requests.
+            </p>
+          </div>
+        </Section>
+
         <button
           type="submit"
           disabled={saving}
