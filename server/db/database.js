@@ -153,6 +153,7 @@ function initDb() {
     "DELETE FROM styles WHERE id IN ('style-bible','style-finance','style-history','style-whiteboard','style-science')",
     "UPDATE styles SET prompt_prefix = 'photorealistic modern military documentary, early 2000s warfare, post-9/11 era combat circa 2001-2010, tactical infantry, realistic war photography style,', prompt_suffix = ', no text, no words, no letters, no captions, no watermarks, no typography, no writing, gritty war photography, cinematic 16:9' WHERE name = 'War Archives'",
     "ALTER TABLE whisk_tokens ADD COLUMN project_id TEXT DEFAULT 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077'",
+    "UPDATE whisk_tokens SET status = 'active', rate_limited_until = NULL, last_error = NULL WHERE status = 'rate_limited' OR status IS NULL",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
