@@ -11,7 +11,7 @@ const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'upl
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
-const FLOW_PROJECT_ID_DEFAULT = 'b998a407-4f9a-4b0c-9bc9-f2fae2a5a077';
+const FLOW_PROJECT_ID_DEFAULT = 'b3238f57-005c-42a4-82ae-3b2bd09f0f52';
 
 function getSettings(db) {
   const rows = db.prepare('SELECT key, value FROM settings').all();
@@ -286,10 +286,10 @@ router.post('/whisk-tokens', authMiddleware, (req, res) => {
 router.put('/whisk-tokens/:id', authMiddleware, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const db = getDb();
-  const { label, status, project_id } = req.body;
+  const { label, project_id } = req.body;
   const cleanToken = req.body.token ? req.body.token.trim().replace(/^Bearer\s+/i, '') : undefined;
   const cleanProjectId = project_id ? project_id.trim() : undefined;
-  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = COALESCE(?, status), project_id = COALESCE(?, project_id) WHERE id = ?').run(label, cleanToken, status, cleanProjectId, req.params.id);
+  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = \'active\', rate_limited_until = NULL, last_error = NULL, project_id = COALESCE(?, project_id) WHERE id = ?').run(label, cleanToken, cleanProjectId, req.params.id);
   const t = db.prepare('SELECT id, label, project_id, usage_count, status, last_used, last_error, rate_limited_until, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
   res.json(t);
 });
