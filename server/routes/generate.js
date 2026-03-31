@@ -239,40 +239,6 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
   res.json({ scenes: updated, demo: false });
 });
 
-// GET /api/generate/flow-config
-router.get('/flow-config', authMiddleware, (req, res) => {
-  const db = getDb();
-  const settings = getSettings(db);
-  const wt = getNextToken(db);
-  if (!wt) return res.status(503).json({ error: 'No active Bearer tokens — add a token in Settings' });
-  const projectId = wt.project_id || settings.flow_project_id || FLOW_PROJECT_ID_DEFAULT;
-  res.json({ token: wt.token, tokenId: wt.id, projectId });
-});
-
-// POST /api/generate/scenes/:sceneId/save-image
-router.post('/scenes/:sceneId/save-image', authMiddleware, (req, res) => {
-  const db = getDb();
-  const { imageUrl } = req.body;
-  if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
-  db.prepare('UPDATE scenes SET image_url = ?, status = ? WHERE id = ?').run(imageUrl, 'generated', req.params.sceneId);
-  res.json({ success: true });
-});
-
-// POST /api/generate/tokens/:id/mark-used
-router.post('/tokens/:id/mark-used', authMiddleware, (req, res) => {
-  const db = getDb();
-  markTokenUsed(db, req.params.id);
-  res.json({ success: true });
-});
-
-// POST /api/generate/tokens/:id/mark-failed
-router.post('/tokens/:id/mark-failed', authMiddleware, (req, res) => {
-  const db = getDb();
-  const { error } = req.body;
-  markTokenRateLimited(db, req.params.id, error ? JSON.stringify(error) : 'Client 403');
-  res.json({ success: true });
-});
-
 // -- Bearer token management ---------------------------------------------------
 
 router.get('/whisk-tokens', authMiddleware, (req, res) => {
