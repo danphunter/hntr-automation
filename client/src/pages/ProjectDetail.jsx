@@ -365,6 +365,35 @@ export default function ProjectDetail() {
 
   // ââ Step 4 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
+  async function callFlowApi(token, projectId, prompt) {
+    const sessionId = ';' + Date.now();
+    const body = {
+      clientContext: { projectId, tool: 'PINHOLE', sessionId },
+      mediaGenerationContext: { batchId: crypto.randomUUID() },
+      useNewMedia: true,
+      requests: [{
+        clientContext: { projectId, tool: 'PINHOLE', sessionId: ';' + Date.now() },
+        imageModelName: 'NARWHAL',
+        imageAspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+        structuredPrompt: { parts: [{ text: prompt }] },
+        seed: Math.floor(Math.random() * 1000000),
+        imageInputs: [],
+      }],
+    };
+    return fetch(
+      `https://aisandbox-pa.googleapis.com/v1/projects/${projectId}/flowMedia:batchGenerateImages`,
+      {
+        method: 'POST',
+        headers: {
+          'accept': '*/*',
+          'authorization': 'Bearer ' + token,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
   async function handleAutoGenerate(initialScenes) {
     setGeneratingAll(true);
     setError('');
@@ -386,6 +415,16 @@ export default function ProjectDetail() {
         }
       }
 
+      // Get flow token from server
+      let flowConfig;
+      try {
+        flowConfig = await api.getFlowConfig();
+      } catch (err) {
+        setError(err.message);
+        return;
+      }
+      const { token, tokenId, projectId } = flowConfig;
+
       // Generate images for pending scenes
       const pending = workingScenes.filter(s => s.status !== 'generated');
       setGenProgress({ current: 0, total: pending.length });
@@ -395,9 +434,21 @@ export default function ProjectDetail() {
         setGeneratingId(scene.id);
         setGenProgress({ current: i + 1, total: pending.length });
         try {
-          const result = await api.generateImage(scene.id);
+          const prompt = scene.image_prompt || scene.text;
+          const flowRes = await callFlowApi(token, projectId, prompt);
+          if (flowRes.status === 403) {
+            await api.markTokenFailed(tokenId, { status: 403 });
+            setError('Token rate limited (403). Add a new token in Settings.');
+            break;
+          }
+          if (!flowRes.ok) throw new Error(`Flow API error: ${flowRes.status}`);
+          const data = await flowRes.json();
+          const fifeUrl = data?.media?.[0]?.image?.generatedImage?.fifeUrl;
+          if (!fifeUrl) throw new Error('No image returned from Flow API');
+          await api.saveSceneImage(scene.id, fifeUrl);
+          await api.markTokenUsed(tokenId);
           setScenes(prev => prev.map(s =>
-            s.id === scene.id ? { ...s, image_url: result.image_url, status: 'generated' } : s
+            s.id === scene.id ? { ...s, image_url: fifeUrl, status: 'generated' } : s
           ));
         } catch (err) {
           setError(`Scene ${(scene.scene_order ?? i) + 1}: ${err.message}`);
@@ -414,9 +465,29 @@ export default function ProjectDetail() {
     setError('');
     try {
       await api.saveScenes(id, scenes);
-      const result = await api.generateImage(sceneId);
+      let flowConfig;
+      try {
+        flowConfig = await api.getFlowConfig();
+      } catch (err) {
+        setError(err.message);
+        return;
+      }
+      const { token, tokenId, projectId } = flowConfig;
+      const scene = scenesRef.current.find(s => s.id === sceneId);
+      const prompt = scene?.image_prompt || scene?.text || '';
+      const flowRes = await callFlowApi(token, projectId, prompt);
+      if (flowRes.status === 403) {
+        await api.markTokenFailed(tokenId, { status: 403 });
+        throw new Error('Token rate limited (403). Add a new token in Settings.');
+      }
+      if (!flowRes.ok) throw new Error(`Flow API error: ${flowRes.status}`);
+      const data = await flowRes.json();
+      const fifeUrl = data?.media?.[0]?.image?.generatedImage?.fifeUrl;
+      if (!fifeUrl) throw new Error('No image returned from Flow API');
+      await api.saveSceneImage(sceneId, fifeUrl);
+      await api.markTokenUsed(tokenId);
       setScenes(prev => prev.map(s =>
-        s.id === sceneId ? { ...s, image_url: result.image_url, status: 'generated', video_url: null, video_status: 'pending' } : s
+        s.id === sceneId ? { ...s, image_url: fifeUrl, status: 'generated', video_url: null, video_status: 'pending' } : s
       ));
     } catch (err) { setError(err.message); }
     finally { setGeneratingId(null); }
