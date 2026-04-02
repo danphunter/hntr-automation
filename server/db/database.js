@@ -41,6 +41,9 @@ function initDb() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    DROP TABLE IF EXISTS style_references;
+    DROP TABLE IF EXISTS styles;
+
     CREATE TABLE IF NOT EXISTS styles (
       id TEXT PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
