@@ -1,6 +1,6 @@
 const express = require('express');
 const { getDb } = require('../db/database');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ router.get('/', authMiddleware, (req, res) => {
 });
 
 // POST /api/niches
-router.post('/', authMiddleware, (req, res) => {
+router.post('/', authMiddleware, adminOnly, (req, res) => {
   const { name, style_type, style_config } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
   if (!style_type) return res.status(400).json({ error: 'style_type is required' });
@@ -27,7 +27,7 @@ router.post('/', authMiddleware, (req, res) => {
 });
 
 // PUT /api/niches/:id
-router.put('/:id', authMiddleware, (req, res) => {
+router.put('/:id', authMiddleware, adminOnly, (req, res) => {
   const db = getDb();
   const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(req.params.id);
   if (!niche) return res.status(404).json({ error: 'Niche not found' });
@@ -51,7 +51,7 @@ router.put('/:id', authMiddleware, (req, res) => {
 });
 
 // DELETE /api/niches/:id
-router.delete('/:id', authMiddleware, (req, res) => {
+router.delete('/:id', authMiddleware, adminOnly, (req, res) => {
   const db = getDb();
   const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(req.params.id);
   if (!niche) return res.status(404).json({ error: 'Niche not found' });

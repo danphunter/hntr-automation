@@ -68,6 +68,7 @@ export const api = {
   // Image generation
   generateImage: (sceneId) => request('POST', `/generate/image/${sceneId}`),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
+  animateScene: (sceneId) => request('POST', `/generate/scene/${sceneId}/animate`),
 
   // Render
   startRender: (projectId, usePlaceholders = false) =>
