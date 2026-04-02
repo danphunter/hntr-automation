@@ -47,7 +47,7 @@ export default function Layout() {
               <FooterLink to="/styles" icon={Palette} label="Styles & Templates" />
             </>
           )}
-          <FooterLink to="/niches" icon={Layers} label="Niches" />
+          <FooterLink to="/styles" icon={Layers} label="Styles" />
           <FooterLink to="/settings" icon={Settings} label="Settings" />
 
           <div className="h-px bg-gray-800 my-1" />

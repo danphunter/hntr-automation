@@ -187,16 +187,6 @@ function initDb() {
     console.log('✅ Seeded users: dan/dan123, john/john123, christian/christian123');
   }
 
-  // Seed niches
-  const nicheCount = db.prepare('SELECT COUNT(*) as count FROM niches').get();
-  if (nicheCount.count === 0) {
-    const insertNiche = db.prepare('INSERT INTO niches (name, style_type, style_config) VALUES (?, ?, ?)');
-    insertNiche.run('Documentary', 'all_image', '{}');
-    insertNiche.run('Cinematic', 'all_video', '{}');
-    insertNiche.run('Hybrid', 'alternating', '{"startWith":"video"}');
-    console.log('✅ Seeded niches: Documentary, Cinematic, Hybrid');
-  }
-
   console.log(`✅ Database ready at ${DB_PATH}`);
 }
 

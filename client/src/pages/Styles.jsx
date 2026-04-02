@@ -49,8 +49,8 @@ function ConfigFields({ styleType, config, onChange }) {
   return null;
 }
 
-// ── Create Niche Modal ────────────────────────────────────────────────────────
-function CreateNicheModal({ onClose, onCreate }) {
+// ── Create Style Modal ────────────────────────────────────────────────────────
+function CreateStyleModal({ onClose, onCreate }) {
   const [form, setForm] = useState({ name: '', style_type: 'all_image', style_config: {} });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -82,7 +82,7 @@ function CreateNicheModal({ onClose, onCreate }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md mx-4">
         <div className="flex items-center justify-between p-5 border-b border-gray-800">
-          <h2 className="text-lg font-semibold text-white">Create Niche</h2>
+          <h2 className="text-lg font-semibold text-white">Create Style</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition-colors">
             <X size={18} />
           </button>
@@ -131,7 +131,7 @@ function CreateNicheModal({ onClose, onCreate }) {
             </button>
             <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-              Create Niche
+              Create Style
             </button>
           </div>
         </form>
@@ -140,8 +140,8 @@ function CreateNicheModal({ onClose, onCreate }) {
   );
 }
 
-// ── Niche Row (inline editing) ────────────────────────────────────────────────
-function NicheRow({ niche, onUpdate, onDelete }) {
+// ── Style Row (inline editing) ────────────────────────────────────────────────
+function StyleRow({ niche, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     name: niche.name,
@@ -171,7 +171,7 @@ function NicheRow({ niche, onUpdate, onDelete }) {
   }
 
   async function handleDelete() {
-    if (!window.confirm(`Delete niche "${niche.name}"? Projects using it will lose their niche assignment.`)) return;
+    if (!window.confirm(`Delete style "${niche.name}"? Projects using it will lose their style assignment.`)) return;
     setDeleting(true);
     try {
       await api.deleteNiche(niche.id);
@@ -268,7 +268,7 @@ function NicheRow({ niche, onUpdate, onDelete }) {
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
-export default function Niches() {
+export default function Styles() {
   const [niches, setNiches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -294,7 +294,7 @@ export default function Niches() {
   return (
     <div className="p-6 max-w-3xl mx-auto">
       {showCreate && (
-        <CreateNicheModal
+        <CreateStyleModal
           onClose={() => setShowCreate(false)}
           onCreate={handleCreated}
         />
@@ -305,10 +305,10 @@ export default function Niches() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <Layers size={22} className="text-indigo-400" />
-            Niches
+            Styles
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Define content niches and their media generation styles.
+            Define content styles and their media generation settings.
           </p>
         </div>
         <button
@@ -316,7 +316,7 @@ export default function Niches() {
           className="btn-primary flex items-center gap-2"
         >
           <Plus size={16} />
-          Create Niche
+          Create Style
         </button>
       </div>
 
@@ -335,7 +335,7 @@ export default function Niches() {
         ))}
       </div>
 
-      {/* Niche list */}
+      {/* Style list */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 size={24} className="animate-spin text-indigo-400" />
@@ -343,18 +343,18 @@ export default function Niches() {
       ) : niches.length === 0 ? (
         <div className="text-center py-16 text-gray-600">
           <Layers size={36} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No niches yet.</p>
+          <p className="text-sm">No styles yet.</p>
           <button
             onClick={() => setShowCreate(true)}
             className="mt-3 text-indigo-400 hover:text-indigo-300 text-sm underline underline-offset-2"
           >
-            Create your first niche
+            Create your first style
           </button>
         </div>
       ) : (
         <div className="space-y-3">
           {niches.map(niche => (
-            <NicheRow
+            <StyleRow
               key={niche.id}
               niche={niche}
               onUpdate={handleUpdated}
