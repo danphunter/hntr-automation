@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const { getDb } = require('../db/database');
@@ -222,27 +223,61 @@ function renderSceneClip(imgPath, clipPath, filter, duration) {
   });
 }
 
-function renderVideoClip(videoPath, clipPath, duration) {
+function execFfmpegRaw(args) {
   return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(videoPath)
-      .videoFilter(`scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=25`)
-      .outputOptions([
-        '-t', String(duration),
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '26',
-        '-threads', '1',
-        '-bufsize', '2M',
-        '-maxrate', '4M',
-        '-pix_fmt', 'yuv420p',
-        '-an',
-      ])
-      .output(clipPath)
-      .on('end', resolve)
-      .on('error', reject)
-      .run();
+    execFile('ffmpeg', ['-y', ...args], (err, _stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message));
+      else resolve();
+    });
   });
+}
+
+async function renderVideoClip(videoPath, clipPath, duration) {
+  if (duration <= 8) {
+    // Simple trim to exact duration
+    await execFfmpegRaw([
+      '-i', videoPath,
+      '-t', String(duration),
+      '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=25',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26',
+      '-threads', '1', '-bufsize', '2M', '-maxrate', '4M',
+      '-pix_fmt', 'yuv420p', '-an',
+      clipPath,
+    ]);
+  } else {
+    const stillDuration = duration - 8;
+    const lastFramePath = clipPath.replace(/\.mp4$/i, '_lastframe.png');
+    try {
+      // Step 1: Extract last frame of the video
+      await execFfmpegRaw([
+        '-sseof', '-0.1',
+        '-i', videoPath,
+        '-frames:v', '1',
+        lastFramePath,
+      ]);
+
+      // Step 2: Concat 8s of video with a freeze-frame still for the remainder
+      const filterComplex =
+        `[0:v]trim=start=0:end=8,setpts=PTS-STARTPTS,` +
+        `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=25[vid];` +
+        `[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
+        `fps=25,trim=duration=${stillDuration},setpts=PTS-STARTPTS[still];` +
+        `[vid][still]concat=n=2:v=1:a=0[out]`;
+
+      await execFfmpegRaw([
+        '-i', videoPath,
+        '-loop', '1', '-i', lastFramePath,
+        '-filter_complex', filterComplex,
+        '-map', '[out]',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26',
+        '-threads', '1', '-bufsize', '2M', '-maxrate', '4M',
+        '-pix_fmt', 'yuv420p', '-an',
+        clipPath,
+      ]);
+    } finally {
+      try { fs.unlinkSync(lastFramePath); } catch {}
+    }
+  }
 }
 
 function concatClips(concatFile, videoOnlyPath) {
