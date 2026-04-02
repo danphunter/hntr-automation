@@ -102,10 +102,10 @@ export default function Settings() {
 
         <Section title="Image Generation — useapi.net Google Flow">
           <ApiKeyField label="useapi.net API Token" keyName="useapi_token" values={values} onChange={onChange} hint="Your useapi.net API token" />
-          <ApiKeyField label="CapSolver API Key" keyName="capsolver_api_key" values={values} onChange={onChange} hint="Your CapSolver API key (auto-registers with useapi.net on save)" />
+          <ApiKeyField label="AntiCaptcha API Key" keyName="anticaptcha_api_key" values={values} onChange={onChange} hint="Your AntiCaptcha API key (auto-registers with useapi.net on save)" />
           <p className="text-xs text-gray-500">
             useapi.net proxies Google Flow (Imagen 4) image generation. Get your token at useapi.net.
-            Providing a CapSolver key auto-registers it with useapi.net on save.
+            Providing an AntiCaptcha key auto-registers it with useapi.net on save.
           </p>
           <div className="grid grid-cols-3 gap-3">
             <NumberField label="Flow Image Batch Size" keyName="flow_image_batch_size" values={values} onChange={onChange} hint="20" />

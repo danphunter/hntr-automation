@@ -158,7 +158,7 @@ function initDb() {
     "INSERT OR IGNORE INTO settings (key, value) VALUES ('flow_image_batch_size', '20')",
     "INSERT OR IGNORE INTO settings (key, value) VALUES ('flow_image_wait_time', '20')",
     "INSERT OR IGNORE INTO settings (key, value) VALUES ('flow_video_batch_size', '5')",
-    "INSERT OR IGNORE INTO settings (key, value) VALUES ('capsolver_api_key', '')",
+    "INSERT OR IGNORE INTO settings (key, value) VALUES ('anticaptcha_api_key', '')",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
