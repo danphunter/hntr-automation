@@ -80,6 +80,12 @@ export const api = {
   saveSettings: (data) => request('PUT', '/settings', data),
   hasKeys: () => request('GET', '/settings/has-keys'),
 
+  // Niches
+  getNiches: () => request('GET', '/niches'),
+  createNiche: (data) => request('POST', '/niches', data),
+  updateNiche: (id, data) => request('PUT', `/niches/${id}`, data),
+  deleteNiche: (id) => request('DELETE', `/niches/${id}`),
+
   // Admin
   getAdminStats: () => request('GET', '/admin/stats'),
   getAdminUsers: () => request('GET', '/admin/users'),

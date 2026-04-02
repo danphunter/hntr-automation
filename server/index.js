@@ -59,6 +59,7 @@ app.use('/api/styles', require('./routes/styles'));
 app.use('/api/generate', require('./routes/generate'));
 app.use('/api/render', require('./routes/render'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/niches', require('./routes/niches'));
 
 // Health check
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));

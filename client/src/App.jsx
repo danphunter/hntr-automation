@@ -9,6 +9,7 @@ import NewProject from './pages/NewProject';
 import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import StylesManager from './pages/StylesManager';
+import Niches from './pages/Niches';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route path="projects/:id" element={<ProjectDetail />} />
         <Route path="settings" element={<Settings />} />
         <Route path="styles" element={<AdminRoute><StylesManager /></AdminRoute>} />
+        <Route path="niches" element={<Niches />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

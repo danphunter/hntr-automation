@@ -4,6 +4,7 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
+const { getSceneMediaType } = require('../utils/mediaStyle');
 
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
@@ -51,6 +52,19 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   if (!scene) return res.status(404).json({ error: 'Scene not found' });
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  // Check niche media style — skip image generation for video scenes
+  if (project.niche_id) {
+    const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
+    if (niche) {
+      const styleConfig = JSON.parse(niche.style_config || '{}');
+      const mediaType = getSceneMediaType(scene.scene_order, niche.style_type, styleConfig);
+      if (mediaType === 'video') {
+        console.log(`[generate] TODO: video generation for scene ${scene.scene_order} (scene id: ${scene.id}) — skipping`);
+        return res.json({ skipped: true, reason: 'video', scene_order: scene.scene_order });
+      }
+    }
+  }
 
   const settings = getSettings(db);
   const useApiToken = settings.useapi_token?.trim();

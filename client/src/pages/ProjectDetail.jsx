@@ -162,8 +162,10 @@ export default function ProjectDetail() {
 
   // Step 1
   const [styles, setStyles] = useState([]);
+  const [niches, setNiches] = useState([]);
   const [editTitle, setEditTitle] = useState('');
   const [editStyleId, setEditStyleId] = useState('');
+  const [editNicheId, setEditNicheId] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
 
   // Step 2
@@ -203,8 +205,8 @@ export default function ProjectDetail() {
 
   // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   useEffect(() => {
-    Promise.all([api.getProject(id), api.getStyles()])
-      .then(([proj, stls]) => {
+    Promise.all([api.getProject(id), api.getStyles(), api.getNiches()])
+      .then(([proj, stls, nchs]) => {
         const scns = proj.scenes || [];
         setProject(proj);
         setScenes(scns);
@@ -214,7 +216,9 @@ export default function ProjectDetail() {
           ? String(proj.style_id)
           : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
         setEditStyleId(styleId);
+        setEditNicheId(proj.niche_id ? String(proj.niche_id) : '');
         setStyles(stls);
+        setNiches(nchs);
         setStep(detectInitialStep(proj, scns));
       })
       .finally(() => setLoading(false));
@@ -270,6 +274,7 @@ export default function ProjectDetail() {
         title: editTitle,
         style_id: editStyleId,
         style: selectedStyle?.name || '',
+        niche_id: editNicheId || null,
       });
       setProject(updated);
       setStep(2);
@@ -557,6 +562,32 @@ export default function ProjectDetail() {
               <p className="text-xs text-gray-500 mt-1.5">{selectedStyle.description}</p>
             )}
           </div>
+
+          {niches.length > 0 && (
+            <div>
+              <label className="label">Niche <span className="text-gray-600 font-normal">(optional)</span></label>
+              <select
+                className="input w-full"
+                value={editNicheId}
+                onChange={e => setEditNicheId(e.target.value)}
+              >
+                <option value="">— No niche —</option>
+                {niches.map(n => (
+                  <option key={n.id} value={n.id}>{n.name}</option>
+                ))}
+              </select>
+              {editNicheId && (() => {
+                const niche = niches.find(n => String(n.id) === editNicheId);
+                if (!niche) return null;
+                const labels = { all_image: 'All Image', all_video: 'All Video', alternating: 'Alternating', first_n_video: 'First N Video' };
+                return (
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    Media style: {labels[niche.style_type] || niche.style_type}
+                  </p>
+                );
+              })()}
+            </div>
+          )}
 
           <button
             onClick={handleSaveDetails}

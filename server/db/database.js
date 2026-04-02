@@ -121,6 +121,14 @@ function initDb() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS niches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      style_type TEXT NOT NULL DEFAULT 'all_image',
+      style_config TEXT NOT NULL DEFAULT '{}',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
     CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
     CREATE INDEX IF NOT EXISTS idx_projects_created_at ON projects(created_at);
@@ -159,6 +167,7 @@ function initDb() {
     "INSERT OR IGNORE INTO settings (key, value) VALUES ('flow_image_wait_time', '20')",
     "INSERT OR IGNORE INTO settings (key, value) VALUES ('flow_video_batch_size', '5')",
     "INSERT OR IGNORE INTO settings (key, value) VALUES ('capsolver_api_key', '')",
+    "ALTER TABLE projects ADD COLUMN niche_id INTEGER REFERENCES niches(id)",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
@@ -176,6 +185,16 @@ function initDb() {
       insert.run(u.id, u.username, bcrypt.hashSync(u.password, 10), u.name, u.role);
     }
     console.log('✅ Seeded users: dan/dan123, john/john123, christian/christian123');
+  }
+
+  // Seed niches
+  const nicheCount = db.prepare('SELECT COUNT(*) as count FROM niches').get();
+  if (nicheCount.count === 0) {
+    const insertNiche = db.prepare('INSERT INTO niches (name, style_type, style_config) VALUES (?, ?, ?)');
+    insertNiche.run('Documentary', 'all_image', '{}');
+    insertNiche.run('Cinematic', 'all_video', '{}');
+    insertNiche.run('Hybrid', 'alternating', '{"startWith":"video"}');
+    console.log('✅ Seeded niches: Documentary, Cinematic, Hybrid');
   }
 
   console.log(`✅ Database ready at ${DB_PATH}`);
