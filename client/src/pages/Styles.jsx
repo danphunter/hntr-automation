@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
-import { Plus, Save, Trash2, X, Loader2, Layers } from 'lucide-react';
+import { Plus, Save, Trash2, X, Loader2, Layers, Upload, ImageIcon } from 'lucide-react';
 
 const STYLE_TYPES = [
   { value: 'all_image', label: 'All Image' },
@@ -150,6 +150,15 @@ function StyleRow({ niche, onUpdate, onDelete }) {
   });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [uploadingRef, setUploadingRef] = useState(false);
+  const [deletingRefIdx, setDeletingRefIdx] = useState(null);
+  const [refImages, setRefImages] = useState(niche.reference_images || []);
+  const fileInputRef = useRef(null);
+
+  // Keep refImages in sync when niche prop changes
+  useEffect(() => {
+    setRefImages(niche.reference_images || []);
+  }, [niche.reference_images]);
 
   function set(key, val) {
     setForm(f => {
@@ -181,12 +190,41 @@ function StyleRow({ niche, onUpdate, onDelete }) {
     }
   }
 
+  async function handleRefUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploadingRef(true);
+    try {
+      const updated = await api.uploadNicheRefImage(niche.id, file);
+      setRefImages(updated.reference_images || []);
+      onUpdate(updated);
+    } catch (err) {
+      alert(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingRef(false);
+    }
+  }
+
+  async function handleRefDelete(idx) {
+    setDeletingRefIdx(idx);
+    try {
+      const updated = await api.deleteNicheRefImage(niche.id, idx);
+      setRefImages(updated.reference_images || []);
+      onUpdate(updated);
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`);
+    } finally {
+      setDeletingRefIdx(null);
+    }
+  }
+
   const styleLabel = STYLE_TYPES.find(t => t.value === niche.style_type)?.label || niche.style_type;
 
   return (
     <div className="card p-5">
       {editing ? (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Name</label>
@@ -216,6 +254,64 @@ function StyleRow({ niche, onUpdate, onDelete }) {
             onChange={cfg => set('style_config', cfg)}
           />
 
+          {/* Character References */}
+          <div className="border-t border-gray-800 pt-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <div>
+                <label className="label mb-0">Character References</label>
+                <p className="text-xs text-gray-600 mt-0.5">(used for consistent characters in video generation)</p>
+              </div>
+              {refImages.length < 3 && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingRef}
+                  className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 px-2.5 py-1.5 rounded hover:bg-gray-800 transition-colors disabled:opacity-50"
+                >
+                  {uploadingRef ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                  Add image
+                </button>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleRefUpload}
+            />
+            {refImages.length === 0 ? (
+              <p className="text-xs text-gray-600 italic">No reference images yet.</p>
+            ) : (
+              <div className="flex gap-2 flex-wrap">
+                {refImages.map((ref, idx) => (
+                  <div key={idx} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-gray-700 flex-shrink-0">
+                    <img
+                      src={ref.url}
+                      alt={`Reference ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRefDelete(idx)}
+                      disabled={deletingRefIdx === idx}
+                      className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-300"
+                    >
+                      {deletingRefIdx === idx
+                        ? <Loader2 size={14} className="animate-spin" />
+                        : <X size={14} />}
+                    </button>
+                    {ref.mediaGenerationId && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-green-900/80 text-green-300 text-center" style={{ fontSize: 8, padding: '1px 0' }}>
+                        linked
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 pt-1">
             <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm py-1.5 px-3">
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
@@ -242,6 +338,12 @@ function StyleRow({ niche, onUpdate, onDelete }) {
               {niche.style_type === 'first_n_video' && (
                 <span className="text-xs text-gray-500">
                   first {niche.style_config?.n ?? 5} scenes as video
+                </span>
+              )}
+              {refImages.length > 0 && (
+                <span className="flex items-center gap-1 text-xs text-gray-500">
+                  <ImageIcon size={11} />
+                  {refImages.length} ref{refImages.length > 1 ? 's' : ''}
                 </span>
               )}
             </div>

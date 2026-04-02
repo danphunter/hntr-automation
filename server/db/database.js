@@ -171,6 +171,7 @@ function initDb() {
     "ALTER TABLE scenes ADD COLUMN video_url TEXT",
     "ALTER TABLE scenes ADD COLUMN video_path TEXT",
     "ALTER TABLE scenes ADD COLUMN video_status TEXT DEFAULT 'pending'",
+    "ALTER TABLE niches ADD COLUMN reference_images TEXT DEFAULT '[]'",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
