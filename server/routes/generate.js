@@ -4,7 +4,6 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
-const { getNextToken, markTokenUsed, markTokenRateLimited } = require('../utils/gemini');
 
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
@@ -16,73 +15,24 @@ function getSettings(db) {
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// -- Gemini Imagen API ---------------------------------------------------------
+// -- useapi.net Google Flow API ------------------------------------------------
 
-async function generateViaGemini(bearerToken, prompt) {
+async function generateViaUseApi(useApiToken, prompt) {
   const fetch = (await import('node-fetch')).default;
-
-  const body = {
-    instances: [{ prompt }],
-    parameters: {
-      sampleCount: 1,
-      aspectRatio: '16:9',
-      safetyFilterLevel: 'block_some',
-      personGeneration: 'allow_adult',
+  const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + useApiToken,
+      'Content-Type': 'application/json',
     },
-  };
-
-  const res = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + bearerToken,
-      },
-      body: JSON.stringify(body),
-    }
-  );
-
-  if (res.status === 429) {
-    const text = await res.text();
-    console.log('Gemini rate-limited:', res.status, text.slice(0, 500));
-    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
-  }
-
-  if (res.status === 401 || res.status === 403) {
-    const text = await res.text();
-    console.log('Gemini auth error:', res.status, text.slice(0, 500));
-    throw new Error(`RATE_LIMITED:${text.slice(0, 200)}`);
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    console.log('Gemini error:', res.status, text.slice(0, 500));
-    if (
-      text.includes('PROHIBITED_CONTENT') ||
-      text.includes('SAFETY') ||
-      text.includes('BLOCKED') ||
-      text.includes('blocked')
-    ) {
-      throw new Error(`UNSAFE_CONTENT:${text.slice(0, 200)}`);
-    }
-    throw new Error(`GEMINI_ERROR:${res.status}:${text.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-
-  // Empty predictions array means safety filter blocked the prompt
-  if (data.predictions && data.predictions.length === 0) {
-    const reason = data.metadata?.filteredReason || 'Safety filter';
-    throw new Error(`UNSAFE_CONTENT:${reason}`);
-  }
-
-  const encoded = data?.predictions?.[0]?.bytesBase64Encoded;
-  if (!encoded) {
-    console.log('Gemini response missing bytesBase64Encoded:', JSON.stringify(data).slice(0, 500));
-    return null;
-  }
-  return Buffer.from(encoded, 'base64');
+    body: JSON.stringify({
+      prompt,
+      model: 'imagen-4',
+      aspectRatio: '16:9',
+      count: 1,
+    }),
+  });
+  return response;
 }
 
 async function saveImageFromBuffer(buffer) {
@@ -102,6 +52,12 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
+  const settings = getSettings(db);
+  const useApiToken = settings.useapi_token?.trim();
+  if (!useApiToken) {
+    return res.status(400).json({ error: 'No useapi.net token configured — add one in Settings.' });
+  }
+
   let rawPrompt = scene.image_prompt || scene.text;
   if (project.style_id) {
     const style = db.prepare('SELECT * FROM styles WHERE id = ?').get(project.style_id);
@@ -110,53 +66,57 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
 
-  let prompt = rawPrompt;
-  let imageBuffer = null;
-  let triedCount = 0;
-  let unsafeContentRetried = false;
+  const prompt = rawPrompt;
 
-  while (true) {
-    const wt = getNextToken(db);
-    if (!wt) {
-      const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
-      const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-      const msg = triedCount === 0
-        ? 'No active Bearer tokens — add a token in Settings'
-        : 'All Bearer tokens are rate-limited — add a fresh token in Settings';
-      return res.status(429).json({ error: msg, retry_after: retrySecs });
-    }
-    triedCount++;
-    try {
-      const buffer = await generateViaGemini(wt.token.trim(), prompt);
-      if (buffer) {
-        markTokenUsed(db, wt.id);
-        imageBuffer = buffer;
-        break;
-      }
-      markTokenRateLimited(db, wt.id, 'Empty response from Gemini');
-    } catch (err) {
-      if (err.message.startsWith('RATE_LIMITED')) {
-        markTokenRateLimited(db, wt.id, err.message.slice(12));
-        console.log(`Token "${wt.label}" rate limited, rotating...`);
-      } else if (err.message.startsWith('UNSAFE_CONTENT') && !unsafeContentRetried) {
-        console.warn(`Safety filter triggered, retrying with scene text only`);
-        unsafeContentRetried = true;
-        prompt = scene.text;
-        triedCount--;
-        continue;
-      } else {
-        markTokenRateLimited(db, wt.id, err.message);
-        console.error(`Token "${wt.label}" error:`, err.message);
-      }
-    }
-    const totalTokens = db.prepare('SELECT COUNT(*) as c FROM whisk_tokens').get().c;
-    if (triedCount >= totalTokens) break;
+  let apiRes;
+  try {
+    apiRes = await generateViaUseApi(useApiToken, prompt);
+  } catch (err) {
+    console.error('[generate] useapi.net fetch error:', err.message);
+    return res.status(500).json({ error: `Image generation failed: ${err.message}` });
   }
 
-  if (!imageBuffer) {
-    const cooldown = db.prepare(`SELECT MIN(CAST((julianday(rate_limited_until) - julianday('now')) * 86400 AS INTEGER)) as secs FROM whisk_tokens WHERE status = 'rate_limited' AND rate_limited_until IS NOT NULL`).get();
-    const retrySecs = cooldown?.secs != null ? Math.max(0, cooldown.secs) : null;
-    return res.status(429).json({ error: 'All Bearer tokens are rate-limited or exhausted — add a fresh token in Settings', retry_after: retrySecs });
+  if (apiRes.status === 429) {
+    const text = await apiRes.text();
+    console.warn('[generate] useapi.net rate limited:', text.slice(0, 300));
+    return res.status(429).json({ error: 'Rate limited by useapi.net — try again shortly.' });
+  }
+
+  if (apiRes.status === 402) {
+    const text = await apiRes.text();
+    console.warn('[generate] useapi.net subscription error:', text.slice(0, 300));
+    return res.status(402).json({ error: 'useapi.net subscription required or quota exceeded.' });
+  }
+
+  if (apiRes.status === 596) {
+    const text = await apiRes.text();
+    console.warn('[generate] useapi.net session error:', text.slice(0, 300));
+    return res.status(596).json({ error: 'useapi.net Google session expired — refresh Google cookies in your useapi.net account.' });
+  }
+
+  if (!apiRes.ok) {
+    const text = await apiRes.text();
+    console.error('[generate] useapi.net error:', apiRes.status, text.slice(0, 500));
+    return res.status(500).json({ error: `useapi.net error ${apiRes.status}: ${text.slice(0, 200)}` });
+  }
+
+  const result = await apiRes.json();
+  const imageUrl = result?.media?.[0]?.image?.generatedImage?.fifeUrl;
+  if (!imageUrl) {
+    console.error('[generate] useapi.net missing fifeUrl in response:', JSON.stringify(result).slice(0, 500));
+    return res.status(500).json({ error: 'Image generation succeeded but no image URL returned.' });
+  }
+
+  // Fetch the image and save locally
+  let imageBuffer;
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`);
+    imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+  } catch (err) {
+    console.error('[generate] Failed to download generated image:', err.message);
+    return res.status(500).json({ error: `Failed to download generated image: ${err.message}` });
   }
 
   const { filename, imgPath } = await saveImageFromBuffer(imageBuffer);
@@ -243,53 +203,6 @@ router.post('/prompts/:projectId', authMiddleware, async (req, res) => {
     updated.push({ id: scene.id, image_prompt: prompt });
   }
   res.json({ scenes: updated, demo: false });
-});
-
-// -- Bearer token management ---------------------------------------------------
-
-router.get('/whisk-tokens', authMiddleware, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const db = getDb();
-  const tokens = db.prepare('SELECT id, label, project_id, usage_count, status, last_used, last_error, rate_limited_until, sort_order, created_at FROM whisk_tokens ORDER BY sort_order ASC, created_at ASC').all();
-  res.json(tokens);
-});
-
-router.post('/whisk-tokens', authMiddleware, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const { label, token, project_id } = req.body;
-  if (!label || !token) return res.status(400).json({ error: 'label and token required' });
-  const cleanToken = token.trim().replace(/^Bearer\s+/i, '');
-  const cleanProjectId = (project_id || FLOW_PROJECT_ID_DEFAULT).trim();
-  const db = getDb();
-  const id = uuidv4();
-  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM whisk_tokens').get().m;
-  db.prepare('INSERT INTO whisk_tokens (id, label, token, project_id, sort_order) VALUES (?, ?, ?, ?, ?)').run(id, label, cleanToken, cleanProjectId, maxOrder + 1);
-  res.status(201).json({ id, label, project_id: cleanProjectId, usage_count: 0, status: 'active', sort_order: maxOrder + 1 });
-});
-
-router.put('/whisk-tokens/:id', authMiddleware, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const db = getDb();
-  const { label, project_id } = req.body;
-  const cleanToken = req.body.token ? req.body.token.trim().replace(/^Bearer\s+/i, '') : undefined;
-  const cleanProjectId = project_id ? project_id.trim() : undefined;
-  db.prepare('UPDATE whisk_tokens SET label = COALESCE(?, label), token = COALESCE(?, token), status = \'active\', rate_limited_until = NULL, last_error = NULL, project_id = COALESCE(?, project_id) WHERE id = ?').run(label, cleanToken, cleanProjectId, req.params.id);
-  const t = db.prepare('SELECT id, label, project_id, usage_count, status, last_used, last_error, rate_limited_until, sort_order FROM whisk_tokens WHERE id = ?').get(req.params.id);
-  res.json(t);
-});
-
-router.delete('/whisk-tokens/:id', authMiddleware, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const db = getDb();
-  db.prepare('DELETE FROM whisk_tokens WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
-});
-
-router.post('/whisk-tokens/:id/reset', authMiddleware, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const db = getDb();
-  db.prepare("UPDATE whisk_tokens SET status = 'active', last_error = NULL WHERE id = ?").run(req.params.id);
-  res.json({ success: true });
 });
 
 module.exports = router;
