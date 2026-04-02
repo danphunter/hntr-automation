@@ -9,15 +9,13 @@ export default function NewProject() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [styles, setStyles] = useState([]);
-  const [niches, setNiches] = useState([]);
-  const [form, setForm] = useState({ title: '', style_id: '', niche_id: '' });
+  const [form, setForm] = useState({ title: '', style_id: '' });
   const [audioFile, setAudioFile] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.getStyles().then(setStyles).catch(() => {});
-    api.getNiches().then(setNiches).catch(() => {});
   }, []);
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
@@ -84,7 +82,7 @@ export default function NewProject() {
               <input className="input" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. David vs Goliath — Full Story" autoFocus />
             </div>
             <div>
-              <label className="label">Video Style / Niche *</label>
+              <label className="label">Video Style *</label>
               <div className="grid grid-cols-2 gap-2 mt-1">
                 {styles.map(s => (
                   <button
@@ -104,21 +102,6 @@ export default function NewProject() {
                 ))}
               </div>
             </div>
-            {niches.length > 0 && (
-              <div>
-                <label className="label">Niche <span className="text-gray-600 font-normal">(optional)</span></label>
-                <select
-                  className="input"
-                  value={form.niche_id}
-                  onChange={e => set('niche_id', e.target.value)}
-                >
-                  <option value="">— No niche —</option>
-                  {niches.map(n => (
-                    <option key={n.id} value={n.id}>{n.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
           </div>
         )}
 
