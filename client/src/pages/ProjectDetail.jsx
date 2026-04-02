@@ -6,7 +6,7 @@ import { recalcTimings, formatTime } from '../utils/scriptAnalyzer';
 import {
   ChevronLeft, ChevronRight, Mic, Scissors, Image, Film, Download,
   Loader2, RefreshCw, Upload, Clock, CheckCircle2, AlertCircle,
-  Save, Trash2, Plus, X, FileText, Play,
+  Save, Trash2, Plus, X, FileText, Play, Video,
 } from 'lucide-react';
 
 
@@ -92,8 +92,12 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
 }
 
 // ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview }) {
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId, onAnimate, onPreview }) {
   const isGenerating = generatingId === scene.id;
+  const isAnimating = animatingId === scene.id;
+  const hasVideo = !!scene.video_url;
+  const canAnimate = !!scene.image_url && !hasVideo && !isGenerating;
+
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border-b border-gray-800">
@@ -103,18 +107,21 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
         <span className="text-xs font-mono text-gray-500 flex-1 truncate">
           {formatTime(scene.start_time)} → {formatTime(scene.end_time)} · {scene.duration}s
         </span>
+        {hasVideo && <Video size={13} className="text-purple-400 flex-shrink-0" title="Animated" />}
         {isGenerating && <Loader2 size={13} className="animate-spin text-indigo-400 flex-shrink-0" />}
-        {!isGenerating && scene.status === 'generated' && <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />}
+        {!isGenerating && scene.status === 'generated' && !hasVideo && <CheckCircle2 size={13} className="text-green-400 flex-shrink-0" />}
         {!isGenerating && scene.status !== 'generated' && <Clock size={13} className="text-gray-600 flex-shrink-0" />}
       </div>
       <div className="p-3 flex gap-3">
         <div className="w-36 flex-shrink-0">
           <div
-            className={`aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative ${scene.image_url && !isGenerating ? "cursor-pointer hover:opacity-80" : ""}`}
-            onClick={() => scene.image_url && !isGenerating && onPreview(scene)}
-            title={scene.image_url ? "Click to enlarge" : ""}
+            className={`aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative ${scene.image_url && !isGenerating && !hasVideo ? "cursor-pointer hover:opacity-80" : ""}`}
+            onClick={() => scene.image_url && !isGenerating && !hasVideo && onPreview(scene)}
+            title={scene.image_url && !hasVideo ? "Click to enlarge" : ""}
           >
-            {scene.image_url ? (
+            {hasVideo ? (
+              <video src={scene.video_url} className="w-full h-full object-cover" muted loop autoPlay playsInline />
+            ) : scene.image_url ? (
               <img src={scene.image_url} alt={`Scene ${index + 1}`} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-700">
@@ -123,20 +130,35 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, onPreview })
                   : <Image size={20} />}
               </div>
             )}
-            {isGenerating && scene.image_url && (
+            {isGenerating && scene.image_url && !hasVideo && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                 <Loader2 size={18} className="animate-spin text-indigo-400" />
+              </div>
+            )}
+            {isAnimating && (
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <Loader2 size={18} className="animate-spin text-purple-400" />
               </div>
             )}
           </div>
           <button
             onClick={() => onRegenerate(scene.id)}
-            disabled={isGenerating || !scene.image_url}
+            disabled={isGenerating || isAnimating || !scene.image_url}
             className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
             Regenerate
           </button>
+          {canAnimate && (
+            <button
+              onClick={() => onAnimate(scene.id)}
+              disabled={isAnimating}
+              className="mt-1 w-full text-xs py-1 rounded bg-purple-900/40 hover:bg-purple-900/60 text-purple-400 border border-purple-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAnimating ? <Loader2 size={10} className="animate-spin" /> : <Video size={10} />}
+              Animate
+            </button>
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-300 leading-relaxed line-clamp-4">{scene.text}</p>
@@ -162,10 +184,8 @@ export default function ProjectDetail() {
 
   // Step 1
   const [styles, setStyles] = useState([]);
-  const [niches, setNiches] = useState([]);
   const [editTitle, setEditTitle] = useState('');
   const [editStyleId, setEditStyleId] = useState('');
-  const [editNicheId, setEditNicheId] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
 
   // Step 2
@@ -179,6 +199,7 @@ export default function ProjectDetail() {
   // Step 4
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
+  const [animatingId, setAnimatingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const autoGenTriggered = useRef(false);
@@ -205,8 +226,8 @@ export default function ProjectDetail() {
 
   // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   useEffect(() => {
-    Promise.all([api.getProject(id), api.getStyles(), api.getNiches()])
-      .then(([proj, stls, nchs]) => {
+    Promise.all([api.getProject(id), api.getStyles()])
+      .then(([proj, stls]) => {
         const scns = proj.scenes || [];
         setProject(proj);
         setScenes(scns);
@@ -216,9 +237,7 @@ export default function ProjectDetail() {
           ? String(proj.style_id)
           : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
         setEditStyleId(styleId);
-        setEditNicheId(proj.niche_id ? String(proj.niche_id) : '');
         setStyles(stls);
-        setNiches(nchs);
         setStep(detectInitialStep(proj, scns));
       })
       .finally(() => setLoading(false));
@@ -274,7 +293,6 @@ export default function ProjectDetail() {
         title: editTitle,
         style_id: editStyleId,
         style: selectedStyle?.name || '',
-        niche_id: editNicheId || null,
       });
       setProject(updated);
       setStep(2);
@@ -427,6 +445,18 @@ export default function ProjectDetail() {
     finally { setGeneratingId(null); }
   }
 
+  async function handleAnimateScene(sceneId) {
+    setAnimatingId(sceneId);
+    setError('');
+    try {
+      const result = await api.animateScene(sceneId);
+      setScenes(prev => prev.map(s =>
+        s.id === sceneId ? { ...s, video_url: result.video_url, video_status: 'generated' } : s
+      ));
+    } catch (err) { setError(err.message); }
+    finally { setAnimatingId(null); }
+  }
+
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   async function handleStartRender() {
     setError('');
@@ -547,7 +577,7 @@ export default function ProjectDetail() {
           </div>
 
           <div>
-            <label className="label">Style / Niche</label>
+            <label className="label">Video Style</label>
             <select
               className="input w-full"
               value={editStyleId}
@@ -563,31 +593,6 @@ export default function ProjectDetail() {
             )}
           </div>
 
-          {niches.length > 0 && (
-            <div>
-              <label className="label">Niche <span className="text-gray-600 font-normal">(optional)</span></label>
-              <select
-                className="input w-full"
-                value={editNicheId}
-                onChange={e => setEditNicheId(e.target.value)}
-              >
-                <option value="">— No niche —</option>
-                {niches.map(n => (
-                  <option key={n.id} value={n.id}>{n.name}</option>
-                ))}
-              </select>
-              {editNicheId && (() => {
-                const niche = niches.find(n => String(n.id) === editNicheId);
-                if (!niche) return null;
-                const labels = { all_image: 'All Image', all_video: 'All Video', alternating: 'Alternating', first_n_video: 'First N Video' };
-                return (
-                  <p className="text-xs text-gray-500 mt-1.5">
-                    Media style: {labels[niche.style_type] || niche.style_type}
-                  </p>
-                );
-              })()}
-            </div>
-          )}
 
           <button
             onClick={handleSaveDetails}
@@ -795,6 +800,8 @@ export default function ProjectDetail() {
                 index={i}
                 onRegenerate={handleRegenerateImage}
                 generatingId={generatingId}
+                animatingId={animatingId}
+                onAnimate={handleAnimateScene}
                 onPreview={setLightboxScene}
               />
             ))}

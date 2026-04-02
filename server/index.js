@@ -35,7 +35,7 @@ console.log(`[Server] UPLOADS_PATH env: ${process.env.UPLOADS_PATH || '(not set)
 const UPLOADS_BASE = process.env.UPLOADS_PATH
   || (_dataExists && _dataIsDir ? path.join(_dataPath, 'uploads') : path.join(__dirname, 'uploads'));
 process.env.UPLOADS_PATH = UPLOADS_BASE; // expose to route files
-for (const sub of ['', 'images', 'references']) {
+for (const sub of ['', 'images', 'references', 'videos']) {
   const dir = path.join(UPLOADS_BASE, sub);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }

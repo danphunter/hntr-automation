@@ -68,6 +68,7 @@ export const api = {
   // Image generation
   generateImage: (sceneId) => request('POST', `/generate/image/${sceneId}`),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
+  animateScene: (sceneId) => request('POST', `/generate/scene/${sceneId}/animate`),
 
   // Render
   startRender: (projectId, usePlaceholders = false) =>
@@ -85,6 +86,12 @@ export const api = {
   createNiche: (data) => request('POST', '/niches', data),
   updateNiche: (id, data) => request('PUT', `/niches/${id}`, data),
   deleteNiche: (id) => request('DELETE', `/niches/${id}`),
+  uploadNicheRefImage: (nicheId, file) => {
+    const fd = new FormData();
+    fd.append('image', file);
+    return request('POST', `/niches/${nicheId}/reference-image`, fd, true);
+  },
+  deleteNicheRefImage: (nicheId, index) => request('DELETE', `/niches/${nicheId}/reference-image/${index}`),
 
   // Admin
   getAdminStats: () => request('GET', '/admin/stats'),

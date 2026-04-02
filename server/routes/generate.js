@@ -9,7 +9,9 @@ const { getSceneMediaType } = require('../utils/mediaStyle');
 const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
+const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
+if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
 function getSettings(db) {
   const rows = db.prepare('SELECT key, value FROM settings').all();
@@ -41,6 +43,72 @@ async function saveImageFromBuffer(buffer) {
   const imgPath = path.join(IMAGES_DIR, filename);
   fs.writeFileSync(imgPath, buffer);
   return { filename, imgPath };
+}
+
+// -- useapi.net asset upload (returns mediaGenerationId) ----------------------
+
+async function uploadAssetToUseApi(useApiToken, imageBuffer, mimeType) {
+  const fetch = (await import('node-fetch')).default;
+  const base64 = imageBuffer.toString('base64');
+  const response = await fetch('https://api.useapi.net/v1/assets/email', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + useApiToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ url: `data:${mimeType};base64,${base64}` }),
+  });
+  return response;
+}
+
+// -- useapi.net Google Flow video generation ----------------------------------
+
+async function generateVideoViaUseApi(useApiToken, prompt, startImage, referenceImages = []) {
+  const fetch = (await import('node-fetch')).default;
+  const body = {
+    prompt,
+    model: 'veo-3.1-fast',
+    aspectRatio: '16:9',
+    startImage,
+  };
+  const refs = (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 3);
+  refs.forEach((ref, i) => { body[`referenceImage_${i + 1}`] = ref.mediaGenerationId; });
+  const response = await fetch('https://api.useapi.net/v1/google-flow/videos', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + useApiToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  return response;
+}
+
+async function pollVideoJob(useApiToken, jobId, maxAttempts = 60) {
+  const fetch = (await import('node-fetch')).default;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const res = await fetch(`https://api.useapi.net/v1/google-flow/videos/${jobId}`, {
+      headers: { 'Authorization': 'Bearer ' + useApiToken },
+    });
+    if (!res.ok) throw new Error(`Poll failed: ${res.status}`);
+    const data = await res.json();
+    const status = (data.status || '').toLowerCase();
+    if (status === 'completed' || status === 'succeeded' || status === 'success') return data;
+    if (status === 'failed' || status === 'error') {
+      throw new Error(`Video generation failed: ${data.error || data.message || status}`);
+    }
+  }
+  throw new Error('Video generation timed out after 5 minutes');
+}
+
+function extractVideoUrl(result) {
+  if (result?.media?.[0]?.video?.uri) return result.media[0].video.uri;
+  if (result?.media?.[0]?.video?.url) return result.media[0].video.url;
+  if (result?.media?.[0]?.videoUrl) return result.media[0].videoUrl;
+  if (result?.videoUrl) return result.videoUrl;
+  if (result?.url) return result.url;
+  return null;
 }
 
 // -- Routes --------------------------------------------------------------------
@@ -137,6 +205,125 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const localUrl = `/api/generate/image-file/${filename}`;
   db.prepare('UPDATE scenes SET image_url = ?, image_path = ?, status = ? WHERE id = ?').run(localUrl, imgPath, 'generated', scene.id);
   res.json({ image_url: localUrl, prompt });
+});
+
+// POST /api/generate/scene/:sceneId/animate (image-to-video)
+router.post('/scene/:sceneId/animate', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  if (!scene.image_path || !fs.existsSync(scene.image_path)) {
+    return res.status(400).json({ error: 'Scene has no generated image. Generate an image first.' });
+  }
+
+  const settings = getSettings(db);
+  const useApiToken = settings.useapi_token?.trim();
+  if (!useApiToken) {
+    return res.status(400).json({ error: 'No useapi.net token configured — add one in Settings.' });
+  }
+
+  // Upload scene image to useapi.net to get a mediaGenerationId (startImage)
+  let startImage;
+  try {
+    const imageBuffer = fs.readFileSync(scene.image_path);
+    const mimeType = scene.image_path.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const uploadRes = await uploadAssetToUseApi(useApiToken, imageBuffer, mimeType);
+    if (!uploadRes.ok) {
+      const text = await uploadRes.text();
+      console.error('[animate] Asset upload failed:', uploadRes.status, text.slice(0, 300));
+      return res.status(500).json({ error: `Failed to upload scene image to useapi.net: ${uploadRes.status}` });
+    }
+    const uploadData = await uploadRes.json();
+    startImage = uploadData.mediaGenerationId || uploadData.id;
+    if (!startImage) {
+      console.error('[animate] No mediaGenerationId in asset upload response:', JSON.stringify(uploadData).slice(0, 300));
+      return res.status(500).json({ error: 'Asset upload succeeded but no mediaGenerationId returned.' });
+    }
+  } catch (err) {
+    console.error('[animate] Asset upload error:', err.message);
+    return res.status(500).json({ error: `Asset upload failed: ${err.message}` });
+  }
+
+  // Get reference images from the project's niche
+  let referenceImages = [];
+  if (project.niche_id) {
+    const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
+    if (niche?.reference_images) {
+      try { referenceImages = JSON.parse(niche.reference_images) || []; } catch {}
+    }
+  }
+
+  const prompt = scene.image_prompt || scene.text;
+
+  let apiRes;
+  try {
+    apiRes = await generateVideoViaUseApi(useApiToken, prompt, startImage, referenceImages);
+  } catch (err) {
+    console.error('[animate] video request error:', err.message);
+    return res.status(500).json({ error: `Video generation failed: ${err.message}` });
+  }
+
+  if (apiRes.status === 429) return res.status(429).json({ error: 'Rate limited by useapi.net — try again shortly.' });
+  if (apiRes.status === 402) return res.status(402).json({ error: 'useapi.net subscription required or quota exceeded.' });
+  if (!apiRes.ok) {
+    const text = await apiRes.text();
+    console.error('[animate] useapi.net error:', apiRes.status, text.slice(0, 500));
+    return res.status(500).json({ error: `useapi.net error ${apiRes.status}: ${text.slice(0, 200)}` });
+  }
+
+  let result = await apiRes.json();
+  console.log('[animate] Initial response:', JSON.stringify(result).slice(0, 500));
+
+  let videoUrl = extractVideoUrl(result);
+  if (!videoUrl) {
+    const jobId = result.jobId || result.id || result.taskId;
+    if (!jobId) {
+      console.error('[animate] No video URL or job ID:', JSON.stringify(result).slice(0, 500));
+      return res.status(500).json({ error: 'No video URL or job ID returned from useapi.net.' });
+    }
+    console.log(`[animate] Polling video job ${jobId}...`);
+    try {
+      result = await pollVideoJob(useApiToken, jobId);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    videoUrl = extractVideoUrl(result);
+    if (!videoUrl) {
+      console.error('[animate] No video URL after polling:', JSON.stringify(result).slice(0, 500));
+      return res.status(500).json({ error: 'Video generation completed but no URL found.' });
+    }
+  }
+
+  // Download and save the video
+  let videoBuffer;
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const vidRes = await fetch(videoUrl);
+    if (!vidRes.ok) throw new Error(`Failed to fetch video: ${vidRes.status}`);
+    videoBuffer = Buffer.from(await vidRes.arrayBuffer());
+  } catch (err) {
+    console.error('[animate] Download error:', err.message);
+    return res.status(500).json({ error: `Failed to download video: ${err.message}` });
+  }
+
+  const filename = `vid-${uuidv4()}.mp4`;
+  const vidPath = path.join(VIDEOS_DIR, filename);
+  fs.writeFileSync(vidPath, videoBuffer);
+
+  const localUrl = `/api/generate/video-file/${filename}`;
+  db.prepare('UPDATE scenes SET video_url = ?, video_path = ? WHERE id = ?').run(localUrl, vidPath, scene.id);
+  res.json({ video_url: localUrl, prompt });
+});
+
+// GET /api/generate/video-file/:filename
+router.get('/video-file/:filename', (req, res) => {
+  const vidPath = path.join(VIDEOS_DIR, path.basename(req.params.filename));
+  if (!vidPath.startsWith(VIDEOS_DIR)) return res.status(404).json({ error: 'Not found' });
+  if (!fs.existsSync(vidPath)) return res.status(404).json({ error: 'Not found' });
+  res.sendFile(vidPath);
 });
 
 // GET /api/generate/image-file/:filename

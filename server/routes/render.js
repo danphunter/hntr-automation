@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const { getDb } = require('../db/database');
@@ -11,6 +12,7 @@ const router = express.Router();
 const RENDERS_DIR = path.join(__dirname, '..', 'renders');
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
+const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
 if (!fs.existsSync(RENDERS_DIR)) fs.mkdirSync(RENDERS_DIR, { recursive: true });
 
 // Track active render jobs
@@ -33,8 +35,8 @@ router.post('/:projectId', authMiddleware, async (req, res) => {
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.projectId);
   if (!scenes.length) return res.status(400).json({ error: 'No scenes found' });
 
-  const scenesWithImages = scenes.filter(s => s.image_url);
-  if (scenesWithImages.length === 0) {
+  const scenesWithMedia = scenes.filter(s => s.image_url || s.video_url);
+  if (scenesWithMedia.length === 0) {
     return res.status(400).json({ error: 'No images generated yet — generate images for your scenes before rendering' });
   }
 
@@ -80,12 +82,24 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   }
 
   try {
-    // Phase 1: Resolve image paths for each scene
+    // Phase 1: Resolve image/video paths for each scene
     const scenePaths = [];
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
 
-      // Re-resolve filename against IMAGES_DIR for Railway restarts
+      // Check for animated video first
+      const rawVideoUrl = scene.video_url || '';
+      const rawVideoPath = scene.video_path || '';
+      let vidPath = null;
+
+      const vidFilename = rawVideoUrl ? path.basename(rawVideoUrl) : rawVideoPath ? path.basename(rawVideoPath) : null;
+      if (vidFilename) {
+        const resolved = path.join(VIDEOS_DIR, vidFilename);
+        if (fs.existsSync(resolved)) vidPath = resolved;
+      }
+      if (!vidPath && rawVideoPath && fs.existsSync(rawVideoPath)) vidPath = rawVideoPath;
+
+      // Fall back to image
       const rawUrl = scene.image_url || '';
       const rawPath = scene.image_path || '';
       let imgPath = null;
@@ -96,12 +110,12 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
         if (fs.existsSync(resolved)) imgPath = resolved;
       }
       if (!imgPath && rawPath && fs.existsSync(rawPath)) imgPath = rawPath;
-      if (!imgPath) imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
+      if (!imgPath && !vidPath) imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
 
       const prevEndTime = i > 0 ? (scenes[i - 1].end_time || 0) : 0;
       const clipDuration = Math.max((scene.end_time || (prevEndTime + 5)) - prevEndTime, 0.5);
 
-      scenePaths.push({ imgPath, duration: clipDuration });
+      scenePaths.push({ imgPath, vidPath, duration: clipDuration });
       setStatus(Math.round((i / scenes.length) * 10), `Resolving scene ${i + 1}/${scenes.length}...`);
     }
 
@@ -110,18 +124,22 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     const clipPaths = [];
 
     for (let i = 0; i < scenePaths.length; i++) {
-      const { imgPath, duration: dur } = scenePaths[i];
+      const { imgPath, vidPath, duration: dur } = scenePaths[i];
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
       setStatus(10 + Math.round((i / scenePaths.length) * 75), `Encoding scene ${i + 1}/${scenePaths.length}...`);
-      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding image (${dur.toFixed(2)}s)...`);
-
-      const filter = slowPan
-        ? buildPanFilter(dur, i, FPS)
-        : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
 
       try {
-        await renderSceneClip(imgPath, clipPath, filter, dur);
+        if (vidPath) {
+          console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding video clip (${dur.toFixed(2)}s)...`);
+          await renderVideoClip(vidPath, clipPath, dur);
+        } else {
+          console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding image (${dur.toFixed(2)}s)...`);
+          const filter = slowPan
+            ? buildPanFilter(dur, i, FPS)
+            : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
+          await renderSceneClip(imgPath, clipPath, filter, dur);
+        }
         clipPaths.push(clipPath);
       } catch (err) {
         console.error(`[render ${jobId}] Scene ${i + 1} failed, skipping:`, err.message);
@@ -203,6 +221,63 @@ function renderSceneClip(imgPath, clipPath, filter, duration) {
       .on('error', reject)
       .run();
   });
+}
+
+function execFfmpegRaw(args) {
+  return new Promise((resolve, reject) => {
+    execFile('ffmpeg', ['-y', ...args], (err, _stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message));
+      else resolve();
+    });
+  });
+}
+
+async function renderVideoClip(videoPath, clipPath, duration) {
+  if (duration <= 8) {
+    // Simple trim to exact duration
+    await execFfmpegRaw([
+      '-i', videoPath,
+      '-t', String(duration),
+      '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=25',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26',
+      '-threads', '1', '-bufsize', '2M', '-maxrate', '4M',
+      '-pix_fmt', 'yuv420p', '-an',
+      clipPath,
+    ]);
+  } else {
+    const stillDuration = duration - 8;
+    const lastFramePath = clipPath.replace(/\.mp4$/i, '_lastframe.png');
+    try {
+      // Step 1: Extract last frame of the video
+      await execFfmpegRaw([
+        '-sseof', '-0.1',
+        '-i', videoPath,
+        '-frames:v', '1',
+        lastFramePath,
+      ]);
+
+      // Step 2: Concat 8s of video with a freeze-frame still for the remainder
+      const filterComplex =
+        `[0:v]trim=start=0:end=8,setpts=PTS-STARTPTS,` +
+        `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=25[vid];` +
+        `[1:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
+        `fps=25,trim=duration=${stillDuration},setpts=PTS-STARTPTS[still];` +
+        `[vid][still]concat=n=2:v=1:a=0[out]`;
+
+      await execFfmpegRaw([
+        '-i', videoPath,
+        '-loop', '1', '-i', lastFramePath,
+        '-filter_complex', filterComplex,
+        '-map', '[out]',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26',
+        '-threads', '1', '-bufsize', '2M', '-maxrate', '4M',
+        '-pix_fmt', 'yuv420p', '-an',
+        clipPath,
+      ]);
+    } finally {
+      try { fs.unlinkSync(lastFramePath); } catch {}
+    }
+  }
 }
 
 function concatClips(concatFile, videoOnlyPath) {
