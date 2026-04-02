@@ -139,6 +139,24 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   res.json({ image_url: localUrl, prompt });
 });
 
+// POST /api/generate/scene/:sceneId/animate
+// NOTE: Veo (Google VideoFX) clips are hard-capped at 8 seconds per generation.
+// Scenes longer than 8s are handled in the render pipeline by looping the clip
+// (via ffmpeg -stream_loop -1 -t {duration}). Shorter scenes are trimmed with -t.
+router.post('/scene/:sceneId/animate', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  // Veo clips are max 8 seconds — the render pipeline handles looping for longer scenes.
+  console.log(`[animate] Veo video generation requested for scene ${scene.id} (order ${scene.scene_order}) — Veo cap: 8s max per clip`);
+
+  // TODO: implement Veo video generation via useapi.net
+  res.status(501).json({ error: 'Video animation not yet implemented' });
+});
+
 // GET /api/generate/image-file/:filename
 router.get('/image-file/:filename', (req, res) => {
   const imgPath = path.join(IMAGES_DIR, path.basename(req.params.filename));

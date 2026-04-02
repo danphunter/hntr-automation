@@ -80,12 +80,13 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
   }
 
   try {
-    // Phase 1: Resolve image paths for each scene
+    // Phase 1: Resolve image/video paths for each scene
     const scenePaths = [];
+    const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
 
-      // Re-resolve filename against IMAGES_DIR for Railway restarts
+      // Re-resolve image filename against IMAGES_DIR for Railway restarts
       const rawUrl = scene.image_url || '';
       const rawPath = scene.image_path || '';
       let imgPath = null;
@@ -96,12 +97,25 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
         if (fs.existsSync(resolved)) imgPath = resolved;
       }
       if (!imgPath && rawPath && fs.existsSync(rawPath)) imgPath = rawPath;
-      if (!imgPath) imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
+
+      // Resolve video path (Veo clips — max 8 seconds each)
+      const rawVideoUrl = scene.video_url || '';
+      const rawVideoPath = scene.video_path || '';
+      let videoPath = null;
+
+      const videoFilename = rawVideoUrl ? path.basename(rawVideoUrl) : rawVideoPath ? path.basename(rawVideoPath) : null;
+      if (videoFilename) {
+        const resolved = path.join(VIDEOS_DIR, videoFilename);
+        if (fs.existsSync(resolved)) videoPath = resolved;
+      }
+      if (!videoPath && rawVideoPath && fs.existsSync(rawVideoPath)) videoPath = rawVideoPath;
+
+      if (!imgPath && !videoPath) imgPath = await createPlaceholderImage(tmpDir, i, scene.text);
 
       const prevEndTime = i > 0 ? (scenes[i - 1].end_time || 0) : 0;
       const clipDuration = Math.max((scene.end_time || (prevEndTime + 5)) - prevEndTime, 0.5);
 
-      scenePaths.push({ imgPath, duration: clipDuration });
+      scenePaths.push({ imgPath, videoPath, duration: clipDuration });
       setStatus(Math.round((i / scenes.length) * 10), `Resolving scene ${i + 1}/${scenes.length}...`);
     }
 
@@ -110,18 +124,24 @@ async function runRender(jobId, project, scenes, audioPath, outputPath, outputFi
     const clipPaths = [];
 
     for (let i = 0; i < scenePaths.length; i++) {
-      const { imgPath, duration: dur } = scenePaths[i];
+      const { imgPath, videoPath, duration: dur } = scenePaths[i];
       const clipPath = path.join(tmpDir, `scene_${i + 1}.mp4`);
 
       setStatus(10 + Math.round((i / scenePaths.length) * 75), `Encoding scene ${i + 1}/${scenePaths.length}...`);
-      console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding image (${dur.toFixed(2)}s)...`);
-
-      const filter = slowPan
-        ? buildPanFilter(dur, i, FPS)
-        : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
 
       try {
-        await renderSceneClip(imgPath, clipPath, filter, dur);
+        if (videoPath) {
+          // Veo clips are max 8 seconds. Trim if scene ≤ 8s, loop if scene > 8s.
+          const looping = dur > 8;
+          console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: video clip (${dur.toFixed(2)}s, ${looping ? 'looping' : 'trimming'})...`);
+          await renderVideoClip(videoPath, clipPath, dur);
+        } else {
+          console.log(`[render ${jobId}] Scene ${i + 1}/${scenePaths.length}: encoding image (${dur.toFixed(2)}s)...`);
+          const filter = slowPan
+            ? buildPanFilter(dur, i, FPS)
+            : `scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=${FPS},trim=duration=${dur},setpts=PTS-STARTPTS`;
+          await renderSceneClip(imgPath, clipPath, filter, dur);
+        }
         clipPaths.push(clipPath);
       } catch (err) {
         console.error(`[render ${jobId}] Scene ${i + 1} failed, skipping:`, err.message);
@@ -189,6 +209,35 @@ function renderSceneClip(imgPath, clipPath, filter, duration) {
       .videoFilter(filter)
       .outputOptions([
         '-t', String(duration),
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '26',
+        '-threads', '1',
+        '-bufsize', '2M',
+        '-maxrate', '4M',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+      ])
+      .output(clipPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+}
+
+// Render a Veo video clip to a fixed-duration clip.
+// Veo caps clips at 8 seconds, so:
+//   duration ≤ 8s → trim with -t
+//   duration > 8s → loop with -stream_loop -1 then trim with -t
+function renderVideoClip(videoPath, clipPath, duration) {
+  return new Promise((resolve, reject) => {
+    const inputOptions = duration > 8 ? ['-stream_loop', '-1'] : [];
+    ffmpeg()
+      .input(videoPath)
+      .inputOptions(inputOptions)
+      .outputOptions([
+        '-t', String(duration),
+        '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-crf', '26',
