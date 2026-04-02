@@ -4,7 +4,7 @@ const { authMiddleware, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
-const PUBLIC_KEYS = ['assemblyai_api_key', 'openai_api_key', 'video_width', 'video_height', 'video_fps', 'flow_project_id'];
+const PUBLIC_KEYS = ['assemblyai_api_key', 'openai_api_key', 'video_width', 'video_height', 'video_fps', 'useapi_token', 'capsolver_api_key', 'flow_image_batch_size', 'flow_image_wait_time', 'flow_video_batch_size'];
 
 // GET /api/settings — admin only (returns full values; input type=password handles visual masking)
 router.get('/', authMiddleware, adminOnly, (req, res) => {
@@ -26,6 +26,34 @@ router.put('/', authMiddleware, adminOnly, (req, res) => {
     }
   });
   upsertMany(req.body);
+
+  // Auto-register CapSolver with useapi.net when both keys are present
+  const rows = db.prepare('SELECT key, value FROM settings WHERE key IN (?, ?)').all('useapi_token', 'capsolver_api_key');
+  const saved = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  if (saved.useapi_token && saved.capsolver_api_key) {
+    (async () => {
+      try {
+        const fetch = (await import('node-fetch')).default;
+        const r = await fetch('https://api.useapi.net/v1/google-flow/accounts/captcha-providers', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + saved.useapi_token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ capsolver: saved.capsolver_api_key }),
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          console.warn('[settings] CapSolver registration failed:', r.status, text.slice(0, 200));
+        } else {
+          console.log('[settings] CapSolver registered with useapi.net');
+        }
+      } catch (err) {
+        console.warn('[settings] CapSolver registration error:', err.message);
+      }
+    })();
+  }
+
   res.json({ success: true });
 });
 
