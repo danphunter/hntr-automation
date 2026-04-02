@@ -69,12 +69,6 @@ export const api = {
   generateImage: (sceneId) => request('POST', `/generate/image/${sceneId}`),
   generatePrompts: (projectId) => request('POST', `/generate/prompts/${projectId}`),
 
-  // Flow tokens (stored in whisk_tokens table, same API paths)
-  getWhiskTokens: () => request('GET', '/generate/whisk-tokens'),
-  addWhiskToken: (label, token, projectId) => request('POST', '/generate/whisk-tokens', { label, token, ...(projectId ? { project_id: projectId } : {}) }),
-  updateWhiskToken: (id, data) => request('PUT', `/generate/whisk-tokens/${id}`, data),
-  deleteWhiskToken: (id) => request('DELETE', `/generate/whisk-tokens/${id}`),
-  resetWhiskToken: (id) => request('POST', `/generate/whisk-tokens/${id}/reset`),
   // Render
   startRender: (projectId, usePlaceholders = false) =>
     request('POST', `/render/${projectId}`, { usePlaceholders }),

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
-import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Video, Clock, CheckCircle2, Loader2, AlertCircle,
   Film, Download, Image, FolderPlus, Trash2,
@@ -65,8 +64,6 @@ export default function Dashboard() {
 
   return (
     <div className="p-10 max-w-7xl mx-auto">
-      <WhiskTokenBanner />
-
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

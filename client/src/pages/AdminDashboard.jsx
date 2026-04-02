@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
-import WhiskTokenBanner from '../components/WhiskTokenBanner';
 import {
   Users, Video, CheckCircle2, Film, Clock, Loader2,
   TrendingUp, Plus, AlertCircle, UserPlus, Trash2, X,
@@ -112,8 +111,6 @@ export default function AdminDashboard() {
         <h1 className="text-2xl font-bold text-white">Admin Dashboard</h1>
         <p className="text-gray-500 text-sm mt-1">Overview of all production activity</p>
       </div>
-
-      <WhiskTokenBanner />
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
