@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Palette, LogOut, ShieldCheck, LayoutDashboard } from 'lucide-react';
+import { Settings, Palette, LogOut, ShieldCheck, LayoutDashboard, Layers } from 'lucide-react';
 
 function FooterLink({ to, icon: Icon, label, end = false }) {
   return (
@@ -47,6 +47,7 @@ export default function Layout() {
               <FooterLink to="/styles" icon={Palette} label="Styles & Templates" />
             </>
           )}
+          <FooterLink to="/niches" icon={Layers} label="Niches" />
           <FooterLink to="/settings" icon={Settings} label="Settings" />
 
           <div className="h-px bg-gray-800 my-1" />

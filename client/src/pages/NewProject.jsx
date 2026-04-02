@@ -9,12 +9,16 @@ export default function NewProject() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [styles, setStyles] = useState([]);
-  const [form, setForm] = useState({ title: '', style_id: '' });
+  const [niches, setNiches] = useState([]);
+  const [form, setForm] = useState({ title: '', style_id: '', niche_id: '' });
   const [audioFile, setAudioFile] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { api.getStyles().then(setStyles).catch(() => {}); }, []);
+  useEffect(() => {
+    api.getStyles().then(setStyles).catch(() => {});
+    api.getNiches().then(setNiches).catch(() => {});
+  }, []);
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
 
@@ -100,6 +104,21 @@ export default function NewProject() {
                 ))}
               </div>
             </div>
+            {niches.length > 0 && (
+              <div>
+                <label className="label">Niche <span className="text-gray-600 font-normal">(optional)</span></label>
+                <select
+                  className="input"
+                  value={form.niche_id}
+                  onChange={e => set('niche_id', e.target.value)}
+                >
+                  <option value="">— No niche —</option>
+                  {niches.map(n => (
+                    <option key={n.id} value={n.id}>{n.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         )}
 

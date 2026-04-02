@@ -28,48 +28,65 @@ router.get('/', authMiddleware, (req, res) => {
   if (req.user.role === 'admin') {
     projects = db.prepare(`
       SELECT p.*, u.display_name as editor_name, u.username as editor_username,
+        n.name as niche_name, n.style_type, n.style_config,
         (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id AND s.image_url != '' AND s.image_url IS NOT NULL) as image_count,
         (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id) as scene_count
       FROM projects p
       LEFT JOIN users u ON p.user_id = u.id
+      LEFT JOIN niches n ON p.niche_id = n.id
       ORDER BY p.created_at DESC
     `).all();
   } else {
     projects = db.prepare(`
       SELECT p.*, u.display_name as editor_name,
+        n.name as niche_name, n.style_type, n.style_config,
         (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id AND s.image_url != '' AND s.image_url IS NOT NULL) as image_count,
         (SELECT COUNT(*) FROM scenes s WHERE s.project_id = p.id) as scene_count
       FROM projects p
       LEFT JOIN users u ON p.user_id = u.id
+      LEFT JOIN niches n ON p.niche_id = n.id
       WHERE p.user_id = ?
       ORDER BY p.created_at DESC
     `).all(req.user.id);
   }
-  res.json(projects);
+  res.json(projects.map(p => ({
+    ...p,
+    style_config: p.style_config ? JSON.parse(p.style_config) : null,
+  })));
 });
 
 // POST /api/projects
 router.post('/', authMiddleware, (req, res) => {
-  const { title, script, style, notes } = req.body;
+  const { title, script, style, notes, niche_id } = req.body;
   if (!title) return res.status(400).json({ error: 'Title required' });
 
   const db = getDb();
   const id = uuidv4();
   db.prepare(`
-    INSERT INTO projects (id, user_id, title, script, style, notes, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'draft')
-  `).run(id, req.user.id, title, script || '', style || 'Bible Animation', notes || '');
+    INSERT INTO projects (id, user_id, title, script, style, notes, niche_id, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')
+  `).run(id, req.user.id, title, script || '', style || 'Bible Animation', notes || '', niche_id || null);
 
-  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
-  res.status(201).json(project);
+  const project = db.prepare(`
+    SELECT p.*, n.name as niche_name, n.style_type, n.style_config
+    FROM projects p LEFT JOIN niches n ON p.niche_id = n.id
+    WHERE p.id = ?
+  `).get(id);
+  res.status(201).json({
+    ...project,
+    style_config: project.style_config ? JSON.parse(project.style_config) : null,
+  });
 });
 
 // GET /api/projects/:id
 router.get('/:id', authMiddleware, (req, res) => {
   const db = getDb();
   const project = db.prepare(`
-    SELECT p.*, u.display_name as editor_name, u.username as editor_username
-    FROM projects p LEFT JOIN users u ON p.user_id = u.id
+    SELECT p.*, u.display_name as editor_name, u.username as editor_username,
+      n.name as niche_name, n.style_type, n.style_config
+    FROM projects p
+    LEFT JOIN users u ON p.user_id = u.id
+    LEFT JOIN niches n ON p.niche_id = n.id
     WHERE p.id = ?
   `).get(req.params.id);
 
@@ -79,7 +96,11 @@ router.get('/:id', authMiddleware, (req, res) => {
   }
 
   const scenes = db.prepare('SELECT * FROM scenes WHERE project_id = ? ORDER BY scene_order').all(req.params.id);
-  res.json({ ...project, scenes });
+  res.json({
+    ...project,
+    style_config: project.style_config ? JSON.parse(project.style_config) : null,
+    scenes,
+  });
 });
 
 // PUT /api/projects/:id
@@ -91,22 +112,30 @@ router.put('/:id', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const { title, script, style, style_id, status, notes, assigned_to } = req.body;
+  const { title, script, style, style_id, status, notes, assigned_to, niche_id } = req.body;
   db.prepare(`
     UPDATE projects SET
       title = COALESCE(?, title),
       script = COALESCE(?, script),
       style = COALESCE(?, style),
       style_id = COALESCE(?, style_id),
+      niche_id = CASE WHEN ? IS NOT NULL THEN ? ELSE niche_id END,
       status = COALESCE(?, status),
       notes = COALESCE(?, notes),
       assigned_to = COALESCE(?, assigned_to),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(title, script, style, style_id ?? null, status, notes, assigned_to, req.params.id);
+  `).run(title, script, style, style_id ?? null, niche_id ?? null, niche_id ?? null, status, notes, assigned_to, req.params.id);
 
-  const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
-  res.json(updated);
+  const updated = db.prepare(`
+    SELECT p.*, n.name as niche_name, n.style_type, n.style_config
+    FROM projects p LEFT JOIN niches n ON p.niche_id = n.id
+    WHERE p.id = ?
+  `).get(req.params.id);
+  res.json({
+    ...updated,
+    style_config: updated.style_config ? JSON.parse(updated.style_config) : null,
+  });
 });
 
 // DELETE /api/projects/:id
