@@ -92,6 +92,7 @@ export const api = {
     return request('POST', `/niches/${nicheId}/reference-image`, fd, true);
   },
   deleteNicheRefImage: (nicheId, index) => request('DELETE', `/niches/${nicheId}/reference-image/${index}`),
+  nicheRefImageUrl: (filename) => `${BASE}/niches/reference-image/${filename}?token=${getToken() || ''}`,
 
   // Admin
   getAdminStats: () => request('GET', '/admin/stats'),
