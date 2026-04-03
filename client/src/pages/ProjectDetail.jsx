@@ -234,10 +234,12 @@ export default function ProjectDetail() {
         setProject(proj);
         setScenes(scns);
         setEditTitle(proj.title || '');
-        // style_id may be null for older projects - fall back to matching by style name
+        // style_id may be null for older projects - fall back to niche_id (same table), then style name match
         const styleId = proj.style_id
           ? String(proj.style_id)
-          : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
+          : proj.niche_id
+            ? String(proj.niche_id)
+            : (stls.find(s => s.name === proj.style)?.id ? String(stls.find(s => s.name === proj.style)?.id) : '');
         setEditStyleId(styleId);
         setStyles(stls);
         setStep(detectInitialStep(proj, scns));
@@ -284,6 +286,7 @@ export default function ProjectDetail() {
       const updated = await api.updateProject(id, {
         title: editTitle,
         style_id: editStyleId,
+        niche_id: editStyleId,
         style: selectedStyle?.name || '',
       });
       setProject(updated);
