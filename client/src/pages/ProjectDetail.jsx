@@ -6,7 +6,7 @@ import { recalcTimings, formatTime } from '../utils/scriptAnalyzer';
 import {
   ChevronLeft, ChevronRight, Mic, Scissors, Image, Film, Download,
   Loader2, RefreshCw, Upload, Clock, CheckCircle2, AlertCircle,
-  Save, Trash2, Plus, X, FileText, Play, Video,
+  Save, Trash2, Plus, X, FileText, Play, Video, Wand2,
 } from 'lucide-react';
 
 
@@ -204,6 +204,10 @@ export default function ProjectDetail() {
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
+
+  // Step 4 - style pattern
+  const [applyingPattern, setApplyingPattern] = useState(false);
+  const [patternProgress, setPatternProgress] = useState({ current: 0, total: 0 });
 
   // Step 5
   const [renderProgress, setRenderProgress] = useState(null);
@@ -445,6 +449,27 @@ export default function ProjectDetail() {
   }
 
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  async function handleApplyStylePattern() {
+    if (!selectedStyle) return;
+    const styleTypes = (selectedStyle.style_type || '').split(',').map(s => s.trim());
+    const videoScenes = scenes.filter((_, i) => styleTypes[i % styleTypes.length] === 'video');
+    if (videoScenes.length === 0) return;
+    setApplyingPattern(true);
+    setPatternProgress({ current: 0, total: videoScenes.length });
+    setError('');
+    try {
+      for (let i = 0; i < videoScenes.length; i++) {
+        setAnimatingId(videoScenes[i].id);
+        const result = await api.animateScene(videoScenes[i].id);
+        setScenes(prev => prev.map(s =>
+          s.id === videoScenes[i].id ? { ...s, video_url: result.video_url, video_status: 'generated' } : s
+        ));
+        setPatternProgress({ current: i + 1, total: videoScenes.length });
+      }
+    } catch (err) { setError(err.message); }
+    finally { setApplyingPattern(false); setAnimatingId(null); }
+  }
+
   async function handleStartRender() {
     setError('');
     try {
@@ -796,6 +821,32 @@ export default function ProjectDetail() {
             </div>
           )}
 
+
+          {/* Apply style pattern */}
+          {selectedStyle?.style_type && !applyingPattern && !generatingAll && (
+            <button
+              onClick={handleApplyStylePattern}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Wand2 size={15} /> Apply Style Pattern
+            </button>
+          )}
+          {applyingPattern && (
+            <div className="card p-4 flex items-center gap-3">
+              <Loader2 size={18} className="animate-spin text-indigo-400 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm text-gray-300 font-medium">
+                  Animating {patternProgress.current} of {patternProgress.total} scenes...
+                </div>
+                <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5">
+                  <div
+                    className="bg-indigo-600 h-1.5 rounded-full transition-all"
+                    style={{ width: `${patternProgress.total > 0 ? (patternProgress.current / patternProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Scene cards */}
           <div className="space-y-3">

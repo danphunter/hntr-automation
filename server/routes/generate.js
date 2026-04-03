@@ -20,20 +20,23 @@ function getSettings(db) {
 
 // -- useapi.net Google Flow API ------------------------------------------------
 
-async function generateViaUseApi(useApiToken, prompt) {
+async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   const fetch = (await import('node-fetch')).default;
+  const body = {
+    prompt,
+    model: 'nano-banana-2',
+    aspectRatio: '16:9',
+    count: 1,
+  };
+  const refs = (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 3);
+  refs.forEach((ref, i) => { body[`referenceImage_${i + 1}`] = ref.mediaGenerationId; });
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      model: 'nano-banana-2',
-      aspectRatio: '16:9',
-      count: 1,
-    }),
+    body: JSON.stringify(body),
   });
   return response;
 }
@@ -150,9 +153,37 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   const prompt = rawPrompt;
 
+  // Load niche reference images; upload any that lack a mediaGenerationId
+  let nicheRefImages = [];
+  if (project.niche_id) {
+    try {
+      const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
+      if (niche) {
+        const refs = JSON.parse(niche.reference_images || '[]');
+        for (const ref of refs) {
+          if (!ref.mediaGenerationId && ref.filePath && fs.existsSync(ref.filePath)) {
+            try {
+              const imgBuf = fs.readFileSync(ref.filePath);
+              const upRes = await uploadAssetToUseApi(useApiToken, imgBuf, 'image/jpeg');
+              if (upRes.ok) {
+                const data = await upRes.json();
+                ref.mediaGenerationId = data.mediaGenerationId || data.id || null;
+              }
+            } catch (e) {
+              console.warn('[generate] ref image upload error:', e.message);
+            }
+          }
+        }
+        nicheRefImages = refs;
+      }
+    } catch (e) {
+      console.warn('[generate] failed to load niche reference images:', e.message);
+    }
+  }
+
   let apiRes;
   try {
-    apiRes = await generateViaUseApi(useApiToken, prompt);
+    apiRes = await generateViaUseApi(useApiToken, prompt, nicheRefImages);
   } catch (err) {
     console.error('[generate] useapi.net fetch error:', err.message);
     return res.status(500).json({ error: `Image generation failed: ${err.message}` });
