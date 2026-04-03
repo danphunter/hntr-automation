@@ -20,7 +20,7 @@ function getSettings(db) {
 
 // -- useapi.net Google Flow API ------------------------------------------------
 
-async function generateViaUseApi(useApiToken, prompt) {
+async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   const fetch = (await import('node-fetch')).default;
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
     method: 'POST',
@@ -33,6 +33,7 @@ async function generateViaUseApi(useApiToken, prompt) {
       model: 'nano-banana-2',
       aspectRatio: '16:9',
       count: 1,
+      referenceImages: (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 3),
     }),
   });
   return response;
@@ -150,9 +151,18 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   const prompt = rawPrompt;
 
+  // Get reference images from the project's niche
+  let referenceImages = [];
+  if (project.niche_id) {
+    const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
+    if (niche?.reference_images) {
+      try { referenceImages = JSON.parse(niche.reference_images) || []; } catch {}
+    }
+  }
+
   let apiRes;
   try {
-    apiRes = await generateViaUseApi(useApiToken, prompt);
+    apiRes = await generateViaUseApi(useApiToken, prompt, referenceImages);
   } catch (err) {
     console.error('[generate] useapi.net fetch error:', err.message);
     return res.status(500).json({ error: `Image generation failed: ${err.message}` });

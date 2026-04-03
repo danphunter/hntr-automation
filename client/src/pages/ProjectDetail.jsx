@@ -212,6 +212,8 @@ export default function ProjectDetail() {
 
   // Lightbox
   const [lightboxScene, setLightboxScene] = useState(null);
+  const [applyingPattern, setApplyingPattern] = useState(false);
+  const [patternProgress, setPatternProgress] = useState('');
 
   // Keep scenesRef in sync for use inside async auto-generate
   useEffect(() => { scenesRef.current = scenes; }, [scenes]);
@@ -443,6 +445,24 @@ export default function ProjectDetail() {
     } catch (err) { setError(err.message); }
     finally { setAnimatingId(null); }
   }
+
+  async function handleApplyStylePattern() {
+    if (!selectedStyle?.style_type) return;
+    const pattern = selectedStyle.style_type.toLowerCase().split(/[\s,]+/).filter(Boolean);
+    const toAnimate = scenes.filter((scene, i) => {
+      const mediaType = pattern[i % pattern.length];
+      return mediaType === 'video' && !scene.video_url;
+    });
+    if (!toAnimate.length) { alert('All video scenes already animated per style pattern.'); return; }
+    setApplyingPattern(true);
+    for (let i = 0; i < toAnimate.length; i++) {
+      setPatternProgress(`Animating ${i + 1} of ${toAnimate.length}...`);
+      await handleAnimateScene(toAnimate[i].id);
+    }
+    setApplyingPattern(false);
+    setPatternProgress('');
+  }
+
 
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   async function handleStartRender() {
@@ -713,7 +733,7 @@ export default function ProjectDetail() {
                   onClick={handleGoToImages}
                   className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
-                  Generate Images <ChevronRight size={15} />
+                  Images <ChevronRight size={15} />
                 </button>
               </div>
             </>
@@ -795,6 +815,19 @@ export default function ProjectDetail() {
               </div>
             </div>
           )}
+
+          {selectedStyle?.style_type && !applyingPattern && (
+            <button
+              onClick={handleApplyStylePattern}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 text-sm font-medium"
+            >
+              Apply Style Pattern
+            </button>
+          )}
+          {applyingPattern && (
+            <p className="text-sm text-purple-400 font-medium">{patternProgress}</p>
+          )}
+
 
 
           {/* Scene cards */}
