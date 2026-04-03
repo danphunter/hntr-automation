@@ -287,7 +287,7 @@ function StyleRow({ niche, onUpdate, onDelete }) {
                 {refImages.map((ref, idx) => (
                   <div key={idx} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-gray-700 flex-shrink-0">
                     <img
-                      src={ref.url}
+                      src={`/api/niches/reference-image/${ref.filename}`}
                       alt={`Reference ${idx + 1}`}
                       className="w-full h-full object-cover"
                     />
