@@ -49,14 +49,17 @@ async function saveImageFromBuffer(buffer) {
 
 async function uploadAssetToUseApi(useApiToken, imageBuffer, mimeType) {
   const fetch = (await import('node-fetch')).default;
-  const base64 = imageBuffer.toString('base64');
+  const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+  const formData = new FormData();
+  formData.append('file', new Blob([imageBuffer], { type: mimeType }), `image.${ext}`);
   const response = await fetch('https://api.useapi.net/v1/assets/email', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
-      'Content-Type': 'application/json',
+      // Content-Type with boundary is set automatically by fetch when using FormData
     },
-    body: JSON.stringify({ url: `data:${mimeType};base64,${base64}` }),
+    body: formData,
+    signal: AbortSignal.timeout(30000),
   });
   return response;
 }
@@ -233,8 +236,8 @@ router.post('/scene/:sceneId/animate', authMiddleware, async (req, res) => {
     const uploadRes = await uploadAssetToUseApi(useApiToken, imageBuffer, mimeType);
     if (!uploadRes.ok) {
       const text = await uploadRes.text();
-      console.error('[animate] Asset upload failed:', uploadRes.status, text.slice(0, 300));
-      return res.status(500).json({ error: `Failed to upload scene image to useapi.net: ${uploadRes.status}` });
+      console.error('[animate] Asset upload failed:', uploadRes.status, text);
+      return res.status(500).json({ error: `Failed to upload scene image to useapi.net: ${uploadRes.status} — ${text.slice(0, 300)}` });
     }
     const uploadData = await uploadRes.json();
     startImage = uploadData.mediaGenerationId || uploadData.id;
