@@ -339,6 +339,118 @@ router.post('/scene/:sceneId/animate', authMiddleware, async (req, res) => {
   res.json({ video_url: localUrl, prompt });
 });
 
+// POST /api/generate/upscale-scene/:sceneId
+// TODO: Verify exact useapi.net Real-ESRGAN endpoint shape — adjust body/response parsing if needed.
+router.post('/upscale-scene/:sceneId', authMiddleware, async (req, res) => {
+  const db = getDb();
+  const scene = db.prepare('SELECT * FROM scenes WHERE id = ?').get(req.params.sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
+  if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+
+  if (!scene.image_path || !fs.existsSync(scene.image_path)) {
+    return res.status(400).json({ error: 'Scene has no generated image. Generate an image first.' });
+  }
+
+  const settings = getSettings(db);
+  const useApiToken = settings.useapi_token?.trim();
+  if (!useApiToken) {
+    return res.status(400).json({ error: 'No useapi.net token configured — add one in Settings.' });
+  }
+
+  const fetch = (await import('node-fetch')).default;
+
+  // Upload image to useapi.net assets first to get a mediaGenerationId
+  let imageMediaId;
+  try {
+    const imageBuffer = fs.readFileSync(scene.image_path);
+    const mimeType = scene.image_path.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const uploadRes = await uploadAssetToUseApi(useApiToken, imageBuffer, mimeType);
+    if (!uploadRes.ok) {
+      const text = await uploadRes.text();
+      console.error('[upscale] Asset upload failed:', uploadRes.status, text);
+      return res.status(500).json({ error: `Failed to upload image to useapi.net: ${uploadRes.status} — ${text.slice(0, 300)}` });
+    }
+    const uploadData = await uploadRes.json();
+    imageMediaId = (uploadData.mediaGenerationId?.mediaGenerationId) || uploadData.mediaGenerationId || uploadData.id;
+    if (!imageMediaId) {
+      console.error('[upscale] No mediaGenerationId in asset upload response:', JSON.stringify(uploadData).slice(0, 300));
+      return res.status(500).json({ error: 'Asset upload succeeded but no mediaGenerationId returned.' });
+    }
+  } catch (err) {
+    console.error('[upscale] Asset upload error:', err.message);
+    return res.status(500).json({ error: `Asset upload failed: ${err.message}` });
+  }
+
+  // Call Real-ESRGAN upscale
+  // TODO: confirm exact request shape from useapi.net Real-ESRGAN docs
+  let apiRes;
+  try {
+    apiRes = await fetch('https://api.useapi.net/v1/real-esrgan/upscale', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + useApiToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mediaGenerationId: imageMediaId }),
+    });
+  } catch (err) {
+    console.error('[upscale] useapi.net fetch error:', err.message);
+    return res.status(500).json({ error: `Upscale request failed: ${err.message}` });
+  }
+
+  if (apiRes.status === 429) return res.status(429).json({ error: 'Rate limited by useapi.net — try again shortly.' });
+  if (apiRes.status === 402) return res.status(402).json({ error: 'useapi.net subscription required or quota exceeded.' });
+  if (apiRes.status === 596) return res.status(596).json({ error: 'useapi.net Google session expired — refresh Google cookies in your useapi.net account.' });
+  if (!apiRes.ok) {
+    const text = await apiRes.text();
+    console.error('[upscale] useapi.net error:', apiRes.status, text.slice(0, 500));
+    return res.status(500).json({ error: `useapi.net upscale error ${apiRes.status}: ${text.slice(0, 200)}` });
+  }
+
+  const result = await apiRes.json();
+  console.log('[upscale] Response:', JSON.stringify(result).slice(0, 500));
+
+  // Extract upscaled image URL — try common response shapes
+  const upscaledUrl =
+    result?.media?.[0]?.image?.generatedImage?.fifeUrl ||
+    result?.media?.[0]?.image?.url ||
+    result?.media?.[0]?.url ||
+    result?.url ||
+    result?.imageUrl ||
+    result?.output_url ||
+    null;
+
+  if (!upscaledUrl) {
+    console.error('[upscale] No image URL in response:', JSON.stringify(result).slice(0, 500));
+    return res.status(500).json({ error: 'Upscale succeeded but no image URL returned. Check server logs.' });
+  }
+
+  // Download and save the upscaled image, replacing the existing file
+  let imageBuffer;
+  try {
+    const imgRes = await fetch(upscaledUrl);
+    if (!imgRes.ok) throw new Error(`Failed to fetch upscaled image: ${imgRes.status}`);
+    imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+  } catch (err) {
+    console.error('[upscale] Download error:', err.message);
+    return res.status(500).json({ error: `Failed to download upscaled image: ${err.message}` });
+  }
+
+  const { filename, imgPath } = await saveImageFromBuffer(imageBuffer);
+  const localUrl = `/api/generate/image-file/${filename}`;
+
+  // Delete old image file if it differs from the new one
+  try {
+    if (scene.image_path && scene.image_path !== imgPath && fs.existsSync(scene.image_path)) {
+      fs.unlinkSync(scene.image_path);
+    }
+  } catch (_) {}
+
+  db.prepare('UPDATE scenes SET image_url = ?, image_path = ? WHERE id = ?').run(localUrl, imgPath, scene.id);
+  res.json({ image_url: localUrl });
+});
+
 // GET /api/generate/video-file/:filename
 router.get('/video-file/:filename', (req, res) => {
   const vidPath = path.join(VIDEOS_DIR, path.basename(req.params.filename));

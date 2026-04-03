@@ -6,7 +6,7 @@ import { recalcTimings, formatTime } from '../utils/scriptAnalyzer';
 import {
   ChevronLeft, ChevronRight, Mic, Scissors, Image, Film, Download,
   Loader2, RefreshCw, Upload, Clock, CheckCircle2, AlertCircle,
-  Save, Trash2, Plus, X, FileText, Play, Video,
+  Save, Trash2, Plus, X, FileText, Play, Video, Maximize2,
 } from 'lucide-react';
 
 
@@ -92,11 +92,13 @@ function TranscriptSceneCard({ scene, index, onUpdate, onDelete }) {
 }
 
 // ââ Scene card for Step 4 (image generation) âââââââââââââââââââââââââââââââââ
-function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId, onAnimate, onPreview }) {
+function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId, onAnimate, upscalingId, onUpscale, onPreview }) {
   const isGenerating = generatingId === scene.id;
   const isAnimating = animatingId === scene.id;
+  const isUpscaling = upscalingId === scene.id;
   const hasVideo = !!scene.video_url;
   const canAnimate = !!scene.image_url && !hasVideo && !isGenerating;
+  const canUpscale = !!scene.image_url && !isGenerating && !isUpscaling;
 
   return (
     <div className="card overflow-hidden">
@@ -140,6 +142,11 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
                 <Loader2 size={18} className="animate-spin text-purple-400" />
               </div>
             )}
+            {isUpscaling && (
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <Loader2 size={18} className="animate-spin text-cyan-400" />
+              </div>
+            )}
           </div>
           <button
             onClick={() => onRegenerate(scene.id)}
@@ -157,6 +164,16 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
             >
               {isAnimating ? <Loader2 size={10} className="animate-spin" /> : <Video size={10} />}
               Animate
+            </button>
+          )}
+          {canUpscale && (
+            <button
+              onClick={() => onUpscale(scene.id)}
+              disabled={isUpscaling}
+              className="mt-1 w-full text-xs py-1 rounded bg-cyan-900/40 hover:bg-cyan-900/60 text-cyan-400 border border-cyan-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isUpscaling ? <Loader2 size={10} className="animate-spin" /> : <Maximize2 size={10} />}
+              Upscale
             </button>
           )}
         </div>
@@ -200,6 +217,7 @@ export default function ProjectDetail() {
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [generatingId, setGeneratingId] = useState(null);
   const [animatingId, setAnimatingId] = useState(null);
+  const [upscalingId, setUpscalingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
   const autoGenTriggered = useRef(false);
@@ -447,6 +465,18 @@ export default function ProjectDetail() {
       ));
     } catch (err) { setError(err.message); }
     finally { setAnimatingId(null); }
+  }
+
+  async function handleUpscaleScene(sceneId) {
+    setUpscalingId(sceneId);
+    setError('');
+    try {
+      const result = await api.upscaleScene(sceneId);
+      setScenes(prev => prev.map(s =>
+        s.id === sceneId ? { ...s, image_url: result.image_url } : s
+      ));
+    } catch (err) { setError(err.message); }
+    finally { setUpscalingId(null); }
   }
 
   async function handleApplyStylePattern() {
@@ -860,6 +890,8 @@ export default function ProjectDetail() {
                 generatingId={generatingId}
                 animatingId={animatingId}
                 onAnimate={handleAnimateScene}
+                upscalingId={upscalingId}
+                onUpscale={handleUpscaleScene}
                 onPreview={setLightboxScene}
               />
             ))}
