@@ -290,7 +290,7 @@ export default function ProjectDetail() {
         style: selectedStyle?.name || '',
       });
       setProject(updated);
-      setStep(2);
+      setStep(detectInitialStep(updated, scenes));
     } catch (err) { setError(err.message); }
     finally { setSavingDetails(false); }
   }
