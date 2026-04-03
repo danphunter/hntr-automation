@@ -49,16 +49,13 @@ async function saveImageFromBuffer(buffer) {
 
 async function uploadAssetToUseApi(useApiToken, imageBuffer, mimeType) {
   const fetch = (await import('node-fetch')).default;
-  const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-  const formData = new FormData();
-  formData.append('file', new Blob([imageBuffer], { type: mimeType }), `image.${ext}`);
-  const response = await fetch('https://api.useapi.net/v1/assets/email', {
+  const response = await fetch('https://api.useapi.net/v1/google-flow/assets', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
-      // Content-Type with boundary is set automatically by fetch when using FormData
+      'Content-Type': mimeType,
     },
-    body: formData,
+    body: imageBuffer,
     signal: AbortSignal.timeout(30000),
   });
   return response;
@@ -240,7 +237,7 @@ router.post('/scene/:sceneId/animate', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: `Failed to upload scene image to useapi.net: ${uploadRes.status} — ${text.slice(0, 300)}` });
     }
     const uploadData = await uploadRes.json();
-    startImage = uploadData.mediaGenerationId || uploadData.id;
+    startImage = (uploadData.mediaGenerationId && uploadData.mediaGenerationId.mediaGenerationId) || uploadData.mediaGenerationId || uploadData.id;
     if (!startImage) {
       console.error('[animate] No mediaGenerationId in asset upload response:', JSON.stringify(uploadData).slice(0, 300));
       return res.status(500).json({ error: 'Asset upload succeeded but no mediaGenerationId returned.' });
