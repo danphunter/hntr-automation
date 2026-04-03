@@ -68,7 +68,7 @@ async function generateVideoViaUseApi(useApiToken, prompt, startImage, reference
   const body = {
     prompt,
     model: 'veo-3.1-fast',
-    aspectRatio: '16:9',
+    aspectRatio: 'landscape',
     startImage,
   };
   const refs = (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 3);
