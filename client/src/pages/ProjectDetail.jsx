@@ -854,12 +854,14 @@ export default function ProjectDetail() {
             <button onClick={() => setStep(3)} className="btn-secondary flex items-center gap-2">
               <ChevronLeft size={15} /> Back
             </button>
-            <button
-              onClick={() => setStep(5)}
-              className="btn-primary flex-1 flex items-center justify-center gap-2"
-            >
-              Render Video <ChevronRight size={15} />
-            </button>
+            {imagesReady === scenes.length && scenes.length > 0 && (
+              <button
+                onClick={() => setStep(5)}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                Render Video <ChevronRight size={15} />
+              </button>
+            )}
           </div>
         </div>
       )}
