@@ -9,6 +9,17 @@ const STYLE_TYPES = [
   { value: 'first_n_video', label: 'First N Video' },
 ];
 
+const STYLE_TYPE_PATTERNS = [
+  { value: '', label: 'No pattern' },
+  { value: 'image', label: 'Image only' },
+  { value: 'video', label: 'Video only' },
+  { value: 'video,image', label: 'Video, Image (alternating)' },
+  { value: 'image,video', label: 'Image, Video (alternating)' },
+  { value: 'video,image,video,image', label: 'Video, Image, Video, Image' },
+  { value: 'image,video,image,video', label: 'Image, Video, Image, Video' },
+  { value: 'video,video,image', label: 'Video, Video, Image' },
+];
+
 function emptyConfig(styleType) {
   if (styleType === 'alternating') return { startWith: 'image' };
   if (styleType === 'first_n_video') return { n: 5 };
@@ -121,12 +132,15 @@ function CreateStyleModal({ onClose, onCreate }) {
 
           <div>
             <label className="label">Style Type Pattern</label>
-            <input
+            <select
               className="input"
               value={form.style_type}
               onChange={e => set('style_type', e.target.value)}
-              placeholder="video,image,video,image"
-            />
+            >
+              {STYLE_TYPE_PATTERNS.map(p => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
           </div>
 
           <ConfigFields
@@ -260,12 +274,15 @@ function StyleRow({ niche, onUpdate, onDelete }) {
 
           <div>
             <label className="label">Style Type Pattern</label>
-            <input
+            <select
               className="input"
               value={form.style_type}
               onChange={e => set('style_type', e.target.value)}
-              placeholder="video,image,video,image"
-            />
+            >
+              {STYLE_TYPE_PATTERNS.map(p => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
           </div>
 
           <ConfigFields
