@@ -36,14 +36,14 @@ function parseNiche(n) {
 
 async function uploadAssetToUseApi(useApiToken, imageBuffer, mimeType) {
   const fetch = (await import('node-fetch')).default;
-  const base64 = imageBuffer.toString('base64');
-  const response = await fetch('https://api.useapi.net/v1/assets/email', {
+  const response = await fetch('https://api.useapi.net/v1/google-flow/assets', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
-      'Content-Type': 'application/json',
+      'Content-Type': mimeType,
     },
-    body: JSON.stringify({ url: `data:${mimeType};base64,${base64}` }),
+    body: imageBuffer,
+    signal: AbortSignal.timeout(30000),
   });
   return response;
 }
@@ -57,18 +57,19 @@ router.get('/', authMiddleware, (req, res) => {
 
 // POST /api/niches
 router.post('/', authMiddleware, adminOnly, (req, res) => {
-  const { name, style_type, style_config, reference_images } = req.body;
+  const { name, style_type, style_config, reference_images, style_prompt } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
   if (!style_type) return res.status(400).json({ error: 'style_type is required' });
 
   const db = getDb();
   const result = db.prepare(
-    'INSERT INTO niches (name, style_type, style_config, reference_images) VALUES (?, ?, ?, ?)'
+    'INSERT INTO niches (name, style_type, style_config, reference_images, style_prompt) VALUES (?, ?, ?, ?, ?)'
   ).run(
     name.trim(),
     style_type,
     JSON.stringify(style_config || {}),
     JSON.stringify(reference_images || []),
+    style_prompt || '',
   );
 
   const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(result.lastInsertRowid);
@@ -81,19 +82,21 @@ router.put('/:id', authMiddleware, adminOnly, (req, res) => {
   const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(req.params.id);
   if (!niche) return res.status(404).json({ error: 'Niche not found' });
 
-  const { name, style_type, style_config, reference_images } = req.body;
+  const { name, style_type, style_config, reference_images, style_prompt } = req.body;
   db.prepare(`
     UPDATE niches SET
       name = COALESCE(?, name),
       style_type = COALESCE(?, style_type),
       style_config = COALESCE(?, style_config),
-      reference_images = COALESCE(?, reference_images)
+      reference_images = COALESCE(?, reference_images),
+      style_prompt = COALESCE(?, style_prompt)
     WHERE id = ?
   `).run(
     name?.trim() || null,
     style_type || null,
     style_config !== undefined ? JSON.stringify(style_config) : null,
     reference_images !== undefined ? JSON.stringify(reference_images) : null,
+    style_prompt !== undefined ? style_prompt : null,
     req.params.id,
   );
 

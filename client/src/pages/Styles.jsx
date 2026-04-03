@@ -62,7 +62,7 @@ function ConfigFields({ styleType, config, onChange }) {
 
 // ── Create Style Modal ────────────────────────────────────────────────────────
 function CreateStyleModal({ onClose, onCreate }) {
-  const [form, setForm] = useState({ name: '', style_type: 'all_image', style_config: {} });
+  const [form, setForm] = useState({ name: '', style_type: 'all_image', style_config: {}, style_prompt: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -143,6 +143,17 @@ function CreateStyleModal({ onClose, onCreate }) {
             </select>
           </div>
 
+          <div>
+            <label className="label">Style Prompt</label>
+            <textarea
+              className="input"
+              rows={2}
+              value={form.style_prompt}
+              onChange={e => set('style_prompt', e.target.value)}
+              placeholder="e.g. cartoon illustration, vibrant colors, flat design, animated style"
+            />
+          </div>
+
           <ConfigFields
             styleType={form.style_type}
             config={form.style_config}
@@ -171,6 +182,7 @@ function StyleRow({ niche, onUpdate, onDelete }) {
     name: niche.name,
     style_type: niche.style_type,
     style_config: niche.style_config || {},
+    style_prompt: niche.style_prompt || '',
   });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -283,6 +295,17 @@ function StyleRow({ niche, onUpdate, onDelete }) {
                 <option key={p.value} value={p.value}>{p.label}</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="label">Style Prompt</label>
+            <textarea
+              className="input"
+              rows={2}
+              value={form.style_prompt}
+              onChange={e => set('style_prompt', e.target.value)}
+              placeholder="e.g. cartoon illustration, vibrant colors, flat design, animated style"
+            />
           </div>
 
           <ConfigFields

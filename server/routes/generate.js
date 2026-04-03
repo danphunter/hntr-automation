@@ -199,6 +199,14 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
     }
   }
 
+  // Append niche style_prompt if set
+  if (project.niche_id) {
+    const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
+    if (niche?.style_prompt) {
+      rawPrompt = `${rawPrompt}. Style: ${niche.style_prompt}`;
+    }
+  }
+
   const prompt = rawPrompt;
 
   // Get reference images from the project's niche
