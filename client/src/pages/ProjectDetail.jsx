@@ -10,6 +10,20 @@ import {
 } from 'lucide-react';
 
 
+function getSceneMediaType(sceneIndex, styleType, styleConfig) {
+  switch (styleType) {
+    case 'all_video': return 'video';
+    case 'all_image': return 'image';
+    case 'alternating': {
+      const startWithVideo = styleConfig?.startWith === 'video';
+      return (sceneIndex % 2 === 0) === startWithVideo ? 'video' : 'image';
+    }
+    case 'first_n_video':
+      return sceneIndex < (styleConfig?.n || 5) ? 'video' : 'image';
+    default: return 'image';
+  }
+}
+
 const STEPS = [
   { id: 1, label: 'Project Details', icon: FileText },
   { id: 2, label: 'Upload Audio',    icon: Mic },
@@ -202,6 +216,8 @@ export default function ProjectDetail() {
   const [animatingId, setAnimatingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const [applyingPattern, setApplyingPattern] = useState(false);
+  const [patternProgress, setPatternProgress] = useState(null);
   const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
 
@@ -445,6 +461,43 @@ export default function ProjectDetail() {
   }
 
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
+  async function handleApplyStylePattern() {
+    if (!selectedStyle?.style_type) return;
+    setApplyingPattern(true);
+    setError('');
+    const styleConfig = selectedStyle.style_config || {};
+
+    const videoScenes = scenes
+      .map((scene, idx) => ({ scene, idx }))
+      .filter(({ scene, idx }) => {
+        const mediaType = getSceneMediaType(scene.scene_order ?? idx, selectedStyle.style_type, styleConfig);
+        return mediaType === 'video' && !scene.video_url && !!scene.image_url;
+      });
+
+    setPatternProgress({ current: 0, total: videoScenes.length, sceneNum: null });
+    try {
+      for (let i = 0; i < videoScenes.length; i++) {
+        const { scene } = videoScenes[i];
+        setPatternProgress({ current: i, total: videoScenes.length, sceneNum: (scene.scene_order ?? i) + 1 });
+        setAnimatingId(scene.id);
+        try {
+          const result = await api.animateScene(scene.id);
+          setScenes(prev => prev.map(s =>
+            s.id === scene.id ? { ...s, video_url: result.video_url, video_status: 'generated' } : s
+          ));
+        } catch (err) {
+          setError('Scene ' + ((scene.scene_order ?? i) + 1) + ': ' + err.message);
+        }
+        setPatternProgress({ current: i + 1, total: videoScenes.length, sceneNum: (scene.scene_order ?? i) + 1 });
+      }
+    } finally {
+      setApplyingPattern(false);
+      setAnimatingId(null);
+      setPatternProgress(null);
+    }
+  }
+
   async function handleStartRender() {
     setError('');
     try {
@@ -796,6 +849,39 @@ export default function ProjectDetail() {
             </div>
           )}
 
+
+          {/* Apply Style Pattern button */}
+          {selectedStyle?.style_type && selectedStyle.style_type !== 'all_image' && !applyingPattern && !generatingAll && (
+            <button
+              onClick={handleApplyStylePattern}
+              disabled={applyingPattern || generatingAll}
+              className="btn-secondary flex items-center gap-2 text-sm"
+            >
+              <Video size={14} /> Apply Style Pattern
+            </button>
+          )}
+
+          {/* Apply Style Pattern progress */}
+          {applyingPattern && patternProgress && (
+            <div className="card p-4 flex items-center gap-3">
+              <Loader2 size={18} className="animate-spin text-purple-400 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm text-gray-300 font-medium">
+                  {patternProgress.sceneNum != null
+                    ? `Animating scene ${patternProgress.sceneNum} of ${patternProgress.total}...`
+                    : `Preparing ${patternProgress.total} scenes...`}
+                </div>
+                {patternProgress.total > 0 && (
+                  <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5">
+                    <div
+                      className="bg-purple-600 h-1.5 rounded-full transition-all"
+                      style={{ width: `${(patternProgress.current / patternProgress.total) * 100}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Scene cards */}
           <div className="space-y-3">

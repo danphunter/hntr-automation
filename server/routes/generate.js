@@ -20,20 +20,24 @@ function getSettings(db) {
 
 // -- useapi.net Google Flow API ------------------------------------------------
 
-async function generateViaUseApi(useApiToken, prompt) {
+async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   const fetch = (await import('node-fetch')).default;
+  const body = {
+    prompt,
+    model: 'nano-banana-2',
+    aspectRatio: '16:9',
+    count: 1,
+  };
+  if (referenceImages && referenceImages.length > 0) {
+    body.referenceImages = referenceImages;
+  }
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      model: 'nano-banana-2',
-      aspectRatio: '16:9',
-      count: 1,
-    }),
+    body: JSON.stringify(body),
   });
   return response;
 }
@@ -150,9 +154,37 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   const prompt = rawPrompt;
 
+  // Upload niche reference images to useapi.net and collect mediaGenerationIds
+  let referenceImages = [];
+  if (project.niche_id) {
+    const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
+    if (niche?.reference_images) {
+      let refs = [];
+      try { refs = JSON.parse(niche.reference_images) || []; } catch {}
+      for (const ref of refs) {
+        if (ref.filePath && fs.existsSync(ref.filePath)) {
+          try {
+            const imageBuffer = fs.readFileSync(ref.filePath);
+            const mimeType = /\.png$/i.test(ref.filePath) ? 'image/png' : 'image/jpeg';
+            const uploadRes = await uploadAssetToUseApi(useApiToken, imageBuffer, mimeType);
+            if (uploadRes.ok) {
+              const data = await uploadRes.json();
+              const mgId = (data.mediaGenerationId?.mediaGenerationId) || data.mediaGenerationId || data.id;
+              if (mgId) referenceImages.push({ mediaGenerationId: mgId });
+            } else {
+              console.warn('[generate] Ref image upload failed:', uploadRes.status);
+            }
+          } catch (err) {
+            console.warn('[generate] Ref image upload error:', err.message);
+          }
+        }
+      }
+    }
+  }
+
   let apiRes;
   try {
-    apiRes = await generateViaUseApi(useApiToken, prompt);
+    apiRes = await generateViaUseApi(useApiToken, prompt, referenceImages);
   } catch (err) {
     console.error('[generate] useapi.net fetch error:', err.message);
     return res.status(500).json({ error: `Image generation failed: ${err.message}` });
