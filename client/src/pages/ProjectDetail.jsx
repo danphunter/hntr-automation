@@ -226,7 +226,7 @@ export default function ProjectDetail() {
 
   // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   useEffect(() => {
-    Promise.all([api.getProject(id), api.getStyles()])
+    Promise.all([api.getProject(id), api.getNiches()])
       .then(([proj, stls]) => {
         const scns = proj.scenes || [];
         setProject(proj);
@@ -585,11 +585,11 @@ export default function ProjectDetail() {
             >
               <option value="">Select a style...</option>
               {styles.map(s => (
-                <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
+                <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
-            {selectedStyle?.description && (
-              <p className="text-xs text-gray-500 mt-1.5">{selectedStyle.description}</p>
+            {selectedStyle?.style_type && (
+              <p className="text-xs text-gray-500 mt-1.5">{selectedStyle.style_type}</p>
             )}
           </div>
 
