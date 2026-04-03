@@ -47,7 +47,7 @@ router.get('/stats', authMiddleware, adminOnly, (req, res) => {
 router.get('/users', authMiddleware, adminOnly, (req, res) => {
   const db = getDb();
   const users = db.prepare(`
-    SELECT u.id, u.username, u.display_name, u.role, u.created_at,
+    SELECT u.id, u.username, u.display_name, u.role, u.avatar, u.created_at,
       COUNT(p.id) as project_count
     FROM users u
     LEFT JOIN projects p ON p.user_id = u.id AND p.deleted_at IS NULL
