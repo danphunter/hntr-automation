@@ -22,19 +22,21 @@ function getSettings(db) {
 
 async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   const fetch = (await import('node-fetch')).default;
+  const body = {
+    prompt,
+    model: 'nano-banana-2',
+    aspectRatio: '16:9',
+    count: 1,
+  };
+  const refs = (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 10);
+  refs.forEach((ref, i) => { body[`reference_${i + 1}`] = ref.mediaGenerationId; });
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      model: 'nano-banana-2',
-      aspectRatio: '16:9',
-      count: 1,
-      referenceImages: (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 3),
-    }),
+    body: JSON.stringify(body),
   });
   return response;
 }

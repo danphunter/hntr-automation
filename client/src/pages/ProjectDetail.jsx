@@ -730,10 +730,10 @@ export default function ProjectDetail() {
                   <ChevronLeft size={15} /> Back
                 </button>
                 <button
-                  onClick={handleGoToImages}
+                  onClick={async () => { await handleGoToImages(); if (!descriptorsDone) handleGenerateDescriptors(); }}
                   className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
-                  Images <ChevronRight size={15} />
+                  {descriptorsDone ? <>Images <ChevronRight size={15} /></> : <>Generate Image Descriptors <ChevronRight size={15} /></>}
                 </button>
               </div>
             </>
