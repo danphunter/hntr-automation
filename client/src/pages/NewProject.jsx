@@ -9,7 +9,7 @@ export default function NewProject() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [styles, setStyles] = useState([]);
-  const [form, setForm] = useState({ title: '', style_id: '' });
+  const [form, setForm] = useState({ title: '', niche_id: '' });
   const [audioFile, setAudioFile] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -24,7 +24,7 @@ export default function NewProject() {
     setError('');
     if (step === 0) {
       if (!form.title.trim()) { setError('Project title is required'); return; }
-      if (!form.style_id) { setError('Please select a style'); return; }
+      if (!form.niche_id) { setError('Please select a style'); return; }
       setStep(1);
     } else {
       // Create project + optionally upload audio
@@ -88,9 +88,9 @@ export default function NewProject() {
                   <button
                     key={s.id}
                     type="button"
-                    onClick={() => set('style_id', s.id)}
+                    onClick={() => set('niche_id', s.id)}
                     className={`text-left p-3 rounded-lg border transition-all ${
-                      form.style_id === s.id
+                      form.niche_id === s.id
                         ? 'border-indigo-500 bg-indigo-900/20'
                         : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
                     }`}

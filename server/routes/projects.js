@@ -125,7 +125,7 @@ router.put('/:id', authMiddleware, (req, res) => {
       assigned_to = COALESCE(?, assigned_to),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(title, script, style, style_id ?? null, niche_id ?? null, niche_id ?? null, status, notes, assigned_to, req.params.id);
+  `).run(title, script, style, style_id || null, niche_id || null, niche_id || null, status, notes, assigned_to, req.params.id);
 
   const updated = db.prepare(`
     SELECT p.*, n.name as niche_name, n.style_type, n.style_config

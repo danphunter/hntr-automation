@@ -228,7 +228,7 @@ export default function ProjectDetail() {
 
   // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   useEffect(() => {
-    Promise.all([api.getProject(id), api.getStyles()])
+    Promise.all([api.getProject(id), api.getNiches()])
       .then(([proj, stls]) => {
         const scns = proj.scenes || [];
         setProject(proj);
@@ -285,8 +285,7 @@ export default function ProjectDetail() {
     try {
       const updated = await api.updateProject(id, {
         title: editTitle,
-        style_id: editStyleId,
-        niche_id: editStyleId,
+        niche_id: editStyleId || null,
         style: selectedStyle?.name || '',
       });
       setProject(updated);
