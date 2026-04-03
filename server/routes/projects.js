@@ -363,8 +363,8 @@ router.post('/:id/scenes', authMiddleware, (req, res) => {
   db.prepare('DELETE FROM scenes WHERE project_id = ?').run(req.params.id);
 
   const insert = db.prepare(`
-    INSERT INTO scenes (id, project_id, scene_order, text, start_time, end_time, duration, image_prompt, image_url, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scenes (id, project_id, scene_order, text, start_time, end_time, duration, image_prompt, image_url, status, video_url, video_path, video_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((scenes) => {
@@ -372,7 +372,8 @@ router.post('/:id/scenes', authMiddleware, (req, res) => {
       insert.run(
         s.id || uuidv4(), req.params.id, i,
         s.text, s.start_time || 0, s.end_time || 5, s.duration || 5,
-        s.image_prompt || '', s.image_url || '', s.status || 'pending'
+        s.image_prompt || '', s.image_url || '', s.status || 'pending',
+        s.video_url || null, s.video_path || null, s.video_status || null
       );
     }
   });

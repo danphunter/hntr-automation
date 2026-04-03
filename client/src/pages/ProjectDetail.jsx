@@ -115,9 +115,9 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
       <div className="p-3 flex gap-3">
         <div className="w-36 flex-shrink-0">
           <div
-            className={`aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative ${scene.image_url && !isGenerating && !hasVideo ? "cursor-pointer hover:opacity-80" : ""}`}
-            onClick={() => scene.image_url && !isGenerating && !hasVideo && onPreview(scene)}
-            title={scene.image_url && !hasVideo ? "Click to enlarge" : ""}
+            className={`aspect-video rounded-lg overflow-hidden bg-gray-800 border border-gray-700 relative ${(scene.image_url || hasVideo) && !isGenerating ? "cursor-pointer hover:opacity-80" : ""}`}
+            onClick={() => (scene.image_url || hasVideo) && !isGenerating && onPreview(scene)}
+            title={(scene.image_url || hasVideo) && !isGenerating ? "Click to enlarge" : ""}
           >
             {hasVideo ? (
               <video src={scene.video_url} className="w-full h-full object-cover" muted loop autoPlay playsInline />
@@ -956,7 +956,9 @@ export default function ProjectDetail() {
               <X size={22} />
             </button>
             <div className="relative rounded-xl overflow-hidden bg-gray-900">
-              {lightboxScene.image_url ? (
+              {lightboxScene.video_url ? (
+                <video src={lightboxScene.video_url} className="w-full" controls autoPlay loop />
+              ) : lightboxScene.image_url ? (
                 <img src={lightboxScene.image_url} alt="Scene preview" className="w-full" />
               ) : (
                 <div className="aspect-video flex items-center justify-center text-gray-600">
