@@ -30,7 +30,7 @@ async function generateViaUseApi(useApiToken, prompt) {
     },
     body: JSON.stringify({
       prompt,
-      model: 'imagen-4',
+      model: 'nano-banana-2',
       aspectRatio: '16:9',
       count: 1,
     }),
