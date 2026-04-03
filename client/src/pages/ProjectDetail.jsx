@@ -249,6 +249,7 @@ export default function ProjectDetail() {
   }, [id]);
 
   function detectInitialStep(proj, scns) {
+    if (!proj.title) return 1;
     if (!proj.audio_filename) return 2;
     if (!scns || scns.length === 0) return 3;
     if (scns.some(s => s.status !== 'generated')) return 4;
