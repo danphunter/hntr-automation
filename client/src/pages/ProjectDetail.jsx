@@ -143,7 +143,7 @@ function ImageSceneCard({ scene, index, onRegenerate, generatingId, animatingId,
           </div>
           <button
             onClick={() => onRegenerate(scene.id)}
-            disabled={isGenerating || isAnimating || !scene.image_url}
+            disabled={isGenerating || isAnimating}
             className="mt-1.5 w-full text-xs py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-400 border border-indigo-800/40 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
@@ -265,17 +265,7 @@ export default function ProjectDetail() {
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ââ Step 4: auto-generate images on entry âââââââââââââââââââââââââââââââââââ
-  useEffect(() => {
-    if (step === 4 && !autoGenTriggered.current && !generatingAll) {
-      const currentScenes = scenesRef.current;
-      if (currentScenes.length > 0 && currentScenes.some(s => s.status !== 'generated')) {
-        autoGenTriggered.current = true;
-        handleAutoGenerate(currentScenes);
-      }
-    }
-  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Step 4: no auto-generate — user initiates via two-step buttons
   // ââ Shared helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   async function loadProject() {
     const data = await api.getProject(id);
@@ -388,35 +378,31 @@ export default function ProjectDetail() {
 
   // ââ Step 4 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-  async function handleAutoGenerate(initialScenes) {
-    setGeneratingAll(true);
+  async function handleGenerateDescriptors() {
+    setGeneratingPrompts(true);
     setError('');
     try {
-      let workingScenes = initialScenes || scenesRef.current;
+      const result = await api.generatePrompts(id);
+      setScenes(prev => prev.map(s => {
+        const found = result.scenes.find(r => r.id === s.id);
+        return found ? { ...s, image_prompt: found.image_prompt } : s;
+      }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGeneratingPrompts(false);
+    }
+  }
 
-      // Generate prompts if any scene is missing one
-      if (workingScenes.some(s => !s.image_prompt)) {
-        setGeneratingPrompts(true);
-        try {
-          const result = await api.generatePrompts(id);
-          workingScenes = workingScenes.map(s => {
-            const found = result.scenes.find(r => r.id === s.id);
-            return found ? { ...s, image_prompt: found.image_prompt } : s;
-          });
-          setScenes(workingScenes);
-        } finally {
-          setGeneratingPrompts(false);
-        }
-      }
-
-      // Generate images for pending scenes
-      const pending = workingScenes.filter(s => s.status !== 'generated');
-      setGenProgress({ current: 0, total: pending.length });
-
+  async function handleGenerateImages() {
+    setGeneratingAll(true);
+    setError('');
+    const pending = scenesRef.current.filter(s => s.status !== 'generated');
+    setGenProgress({ current: 0, total: pending.length });
+    try {
       for (let i = 0; i < pending.length; i++) {
         const scene = pending[i];
         setGeneratingId(scene.id);
-        setGenProgress({ current: i + 1, total: pending.length });
         try {
           const result = await api.generateImage(scene.id);
           setScenes(prev => prev.map(s =>
@@ -425,6 +411,7 @@ export default function ProjectDetail() {
         } catch (err) {
           setError(`Scene ${(scene.scene_order ?? i) + 1}: ${err.message}`);
         }
+        setGenProgress({ current: i + 1, total: pending.length });
       }
     } finally {
       setGeneratingAll(false);
@@ -479,6 +466,7 @@ export default function ProjectDetail() {
   // ââ Computed ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   const totalDuration = scenes.reduce((a, s) => a + (s.duration || 0), 0);
   const imagesReady = scenes.filter(s => s.status === 'generated').length;
+  const descriptorsDone = scenes.length > 0 && scenes.every(s => !!s.image_prompt);
   const selectedStyle = styles.find(s => String(s.id) === String(editStyleId));
 
   // ââ Render ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -759,37 +747,55 @@ export default function ProjectDetail() {
             <span className="text-sm text-gray-500">{imagesReady}/{scenes.length} ready</span>
           </div>
 
-          {/* Generation progress indicator */}
-          {(generatingPrompts || generatingAll) && (
+          {/* Step 1: Generate descriptors button */}
+          {!descriptorsDone && !generatingPrompts && !generatingAll && (
+            <button
+              onClick={handleGenerateDescriptors}
+              className="btn-primary flex items-center gap-2"
+            >
+              <FileText size={15} /> Generate Image Descriptors
+            </button>
+          )}
+
+          {/* Descriptor generation in progress */}
+          {generatingPrompts && (
+            <div className="card p-4 flex items-center gap-3">
+              <Loader2 size={18} className="animate-spin text-indigo-400 flex-shrink-0" />
+              <span className="text-sm text-gray-300 font-medium">Generating image descriptors...</span>
+            </div>
+          )}
+
+          {/* Step 2: Generate images button (shown once descriptors exist) */}
+          {descriptorsDone && !generatingAll && scenes.some(s => s.status !== 'generated') && (
+            <button
+              onClick={handleGenerateImages}
+              className="btn-primary flex items-center gap-2"
+            >
+              <Image size={15} />
+              {imagesReady > 0
+                ? `Resume Image Generation (${scenes.length - imagesReady} remaining)`
+                : 'Generate Images'}
+            </button>
+          )}
+
+          {/* Image generation progress */}
+          {generatingAll && genProgress.total > 0 && (
             <div className="card p-4 flex items-center gap-3">
               <Loader2 size={18} className="animate-spin text-indigo-400 flex-shrink-0" />
               <div className="flex-1">
                 <div className="text-sm text-gray-300 font-medium">
-                  {generatingPrompts
-                    ? 'Generating image prompts...'
-                    : `Generating image ${genProgress.current} of ${genProgress.total}...`}
+                  {genProgress.current} of {genProgress.total} images done
                 </div>
-                {!generatingPrompts && genProgress.total > 0 && (
-                  <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5">
-                    <div
-                      className="bg-indigo-600 h-1.5 rounded-full transition-all"
-                      style={{ width: `${(genProgress.current / genProgress.total) * 100}%` }}
-                    />
-                  </div>
-                )}
+                <div className="mt-2 w-full bg-gray-800 rounded-full h-1.5">
+                  <div
+                    className="bg-indigo-600 h-1.5 rounded-full transition-all"
+                    style={{ width: `${(genProgress.current / genProgress.total) * 100}%` }}
+                  />
+                </div>
               </div>
             </div>
           )}
 
-          {/* Resume button when generation was interrupted */}
-          {!generatingAll && !generatingPrompts && scenes.some(s => s.status !== 'generated') && imagesReady > 0 && (
-            <button
-              onClick={() => { autoGenTriggered.current = false; handleAutoGenerate(); }}
-              className="btn-secondary text-sm flex items-center gap-2"
-            >
-              <RefreshCw size={13} /> Resume Generation ({scenes.length - imagesReady} remaining)
-            </button>
-          )}
 
           {/* Scene cards */}
           <div className="space-y-3">
@@ -975,7 +981,7 @@ export default function ProjectDetail() {
               <p className="text-sm text-gray-300 leading-relaxed flex-1">{lightboxScene.text}</p>
               <button
                 onClick={() => handleRegenerateImage(lightboxScene.id)}
-                disabled={generatingId === lightboxScene.id || !lightboxScene.image_url}
+                disabled={generatingId === lightboxScene.id}
                 className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {generatingId === lightboxScene.id
