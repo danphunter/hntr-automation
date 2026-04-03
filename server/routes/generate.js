@@ -28,6 +28,21 @@ async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
     aspectRatio: '16:9',
     count: 1,
   };
+  // Re-upload any refs missing mediaGenerationId
+  for (const ref of referenceImages) {
+    if (!ref.mediaGenerationId && ref.filePath) {
+      try {
+        const fs = require('fs');
+        const imgBuffer = fs.readFileSync(ref.filePath);
+        const uploadData = await uploadAssetToUseApi(useApiToken, imgBuffer, 'image/jpeg');
+        const uploadJson = await uploadData.json();
+        ref.mediaGenerationId = uploadJson?.mediaGenerationId?.mediaGenerationId || uploadJson?.mediaGenerationId || uploadJson?.id;
+        console.log(`Re-uploaded reference image, got mediaGenerationId: ${ref.mediaGenerationId}`);
+      } catch (err) {
+        console.error('Failed to re-upload reference image:', err.message);
+      }
+    }
+  }
   const refs = (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 10);
   refs.forEach((ref, i) => { body[`reference_${i + 1}`] = ref.mediaGenerationId; });
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
@@ -74,6 +89,21 @@ async function generateVideoViaUseApi(useApiToken, prompt, startImage, reference
     aspectRatio: 'landscape',
     startImage,
   };
+  // Re-upload any refs missing mediaGenerationId
+  for (const ref of referenceImages) {
+    if (!ref.mediaGenerationId && ref.filePath) {
+      try {
+        const fs = require('fs');
+        const imgBuffer = fs.readFileSync(ref.filePath);
+        const uploadData = await uploadAssetToUseApi(useApiToken, imgBuffer, 'image/jpeg');
+        const uploadJson = await uploadData.json();
+        ref.mediaGenerationId = uploadJson?.mediaGenerationId?.mediaGenerationId || uploadJson?.mediaGenerationId || uploadJson?.id;
+        console.log(`Re-uploaded reference image, got mediaGenerationId: ${ref.mediaGenerationId}`);
+      } catch (err) {
+        console.error('Failed to re-upload reference image:', err.message);
+      }
+    }
+  }
   const refs = (referenceImages || []).filter(r => r.mediaGenerationId).slice(0, 3);
   refs.forEach((ref, i) => { body[`referenceImage_${i + 1}`] = ref.mediaGenerationId; });
   const response = await fetch('https://api.useapi.net/v1/google-flow/videos', {
