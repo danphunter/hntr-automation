@@ -172,19 +172,6 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(scene.project_id);
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
 
-  // Check niche media style — skip image generation for video scenes
-  if (project.niche_id) {
-    const niche = db.prepare('SELECT * FROM niches WHERE id = ?').get(project.niche_id);
-    if (niche) {
-      const styleConfig = JSON.parse(niche.style_config || '{}');
-      const mediaType = getSceneMediaType(scene.scene_order, niche.style_type, styleConfig);
-      if (mediaType === 'video') {
-        console.log(`[generate] TODO: video generation for scene ${scene.scene_order} (scene id: ${scene.id}) — skipping`);
-        return res.json({ skipped: true, reason: 'video', scene_order: scene.scene_order });
-      }
-    }
-  }
-
   const settings = getSettings(db);
   const useApiToken = settings.useapi_token?.trim();
   if (!useApiToken) {

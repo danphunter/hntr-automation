@@ -804,12 +804,12 @@ export default function ProjectDetail() {
             </div>
           )}
 
-          {selectedStyle?.style_type && !applyingPattern && (
+          {selectedStyle?.style_type && !applyingPattern && scenes.length > 0 && scenes.every(s => !!s.image_url) && (
             <button
               onClick={handleApplyStylePattern}
               className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 text-sm font-medium"
             >
-              Apply Style Pattern
+              Apply Video Pattern
             </button>
           )}
           {applyingPattern && (
