@@ -590,27 +590,9 @@ export default function ProjectDetail() {
             />
           </div>
 
-          <div>
-            <label className="label">Video Style</label>
-            <select
-              className="input w-full"
-              value={editStyleId}
-              onChange={e => setEditStyleId(e.target.value)}
-            >
-              <option value="">Select a style...</option>
-              {styles.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            {selectedStyle?.style_type && (
-              <p className="text-xs text-gray-500 mt-1.5">{selectedStyle.style_type}</p>
-            )}
-          </div>
-
-
           <button
             onClick={handleSaveDetails}
-            disabled={savingDetails || !editTitle.trim() || !editStyleId}
+            disabled={savingDetails || !editTitle.trim()}
             className="btn-primary w-full flex items-center justify-center gap-2"
           >
             {savingDetails && <Loader2 size={15} className="animate-spin" />}
