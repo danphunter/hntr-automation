@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/database');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -34,6 +34,7 @@ router.get('/', authMiddleware, (req, res) => {
       FROM projects p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN niches n ON p.niche_id = n.id
+      WHERE p.deleted_at IS NULL
       ORDER BY p.created_at DESC
     `).all();
   } else {
@@ -45,7 +46,7 @@ router.get('/', authMiddleware, (req, res) => {
       FROM projects p
       LEFT JOIN users u ON p.user_id = u.id
       LEFT JOIN niches n ON p.niche_id = n.id
-      WHERE p.user_id = ?
+      WHERE p.user_id = ? AND p.deleted_at IS NULL
       ORDER BY p.created_at DESC
     `).all(req.user.id);
   }
@@ -78,6 +79,19 @@ router.post('/', authMiddleware, (req, res) => {
   });
 });
 
+// GET /api/projects/deleted — admin-only, lists soft-deleted projects
+router.get('/deleted', authMiddleware, adminOnly, (req, res) => {
+  const db = getDb();
+  const projects = db.prepare(`
+    SELECT p.*, u.display_name as editor_name, u.username as editor_username
+    FROM projects p
+    LEFT JOIN users u ON p.user_id = u.id
+    WHERE p.deleted_at IS NOT NULL
+    ORDER BY p.deleted_at DESC
+  `).all();
+  res.json(projects);
+});
+
 // GET /api/projects/:id
 router.get('/:id', authMiddleware, (req, res) => {
   const db = getDb();
@@ -87,7 +101,7 @@ router.get('/:id', authMiddleware, (req, res) => {
     FROM projects p
     LEFT JOIN users u ON p.user_id = u.id
     LEFT JOIN niches n ON p.niche_id = n.id
-    WHERE p.id = ?
+    WHERE p.id = ? AND p.deleted_at IS NULL
   `).get(req.params.id);
 
   if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -138,17 +152,28 @@ router.put('/:id', authMiddleware, (req, res) => {
   });
 });
 
-// DELETE /api/projects/:id
+// DELETE /api/projects/:id — soft delete
 router.delete('/:id', authMiddleware, (req, res) => {
   const db = getDb();
-  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  const project = db.prepare('SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
   if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
+  db.prepare('UPDATE projects SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
   res.json({ success: true });
+});
+
+// POST /api/projects/:id/restore — admin-only, clears deleted_at
+router.post('/:id/restore', authMiddleware, adminOnly, (req, res) => {
+  const db = getDb();
+  const project = db.prepare('SELECT * FROM projects WHERE id = ? AND deleted_at IS NOT NULL').get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found or not deleted' });
+
+  db.prepare('UPDATE projects SET deleted_at = NULL WHERE id = ?').run(req.params.id);
+  const restored = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  res.json(restored);
 });
 
 // POST /api/projects/:id/upload-audio

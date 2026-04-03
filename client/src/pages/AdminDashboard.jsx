@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import {
   Users, Video, CheckCircle2, Film, Clock, Loader2,
-  TrendingUp, Plus, AlertCircle, UserPlus, Trash2, X,
+  TrendingUp, Plus, AlertCircle, UserPlus, Trash2, X, RotateCcw,
 } from 'lucide-react';
 
 const STATUS_COLORS = {
@@ -85,13 +85,19 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddUser, setShowAddUser] = useState(false);
+  const [deletedProjects, setDeletedProjects] = useState([]);
 
   async function loadData() {
-    const [s, u] = await Promise.all([api.getAdminStats(), api.getAdminUsers()]);
-    setStats(s); setUsers(u);
+    const [s, u, d] = await Promise.all([api.getAdminStats(), api.getAdminUsers(), api.getDeletedProjects()]);
+    setStats(s); setUsers(u); setDeletedProjects(d);
   }
 
   useEffect(() => { loadData().finally(() => setLoading(false)); }, []);
+
+  async function handleRestoreProject(id) {
+    await api.restoreProject(id);
+    setDeletedProjects(p => p.filter(x => x.id !== id));
+  }
 
   async function handleDeleteUser(id, name) {
     if (!confirm(`Delete user "${name}"? Their projects will remain.`)) return;
@@ -192,6 +198,46 @@ export default function AdminDashboard() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Deleted Projects */}
+      <div className="mt-8">
+        <h2 className="font-semibold text-white flex items-center gap-2 mb-3">
+          <Trash2 size={16} className="text-red-400" /> Deleted Projects
+        </h2>
+        {deletedProjects.length === 0 ? (
+          <div className="card p-6 text-center text-gray-600">No deleted projects</div>
+        ) : (
+          <div className="card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-left">
+                  <th className="px-4 py-2 text-gray-500 font-medium">Title</th>
+                  <th className="px-4 py-2 text-gray-500 font-medium">Editor</th>
+                  <th className="px-4 py-2 text-gray-500 font-medium">Deleted</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {deletedProjects.map(p => (
+                  <tr key={p.id} className="border-b border-gray-800/50 last:border-0">
+                    <td className="px-4 py-2 text-gray-200">{p.title}</td>
+                    <td className="px-4 py-2 text-gray-500">{p.editor_name || '—'}</td>
+                    <td className="px-4 py-2 text-gray-500">{new Date(p.deleted_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={() => handleRestoreProject(p.id)}
+                        className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                      >
+                        <RotateCcw size={12} /> Restore
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {showAddUser && (

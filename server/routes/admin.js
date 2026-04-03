@@ -10,24 +10,24 @@ const router = express.Router();
 router.get('/stats', authMiddleware, adminOnly, (req, res) => {
   const db = getDb();
 
-  const totalProjects = db.prepare('SELECT COUNT(*) as count FROM projects').get().count;
+  const totalProjects = db.prepare("SELECT COUNT(*) as count FROM projects WHERE deleted_at IS NULL").get().count;
   const thisWeek = db.prepare(`
     SELECT COUNT(*) as count FROM projects
-    WHERE created_at >= datetime('now', '-7 days')
+    WHERE deleted_at IS NULL AND created_at >= datetime('now', '-7 days')
   `).get().count;
   const thisMonth = db.prepare(`
     SELECT COUNT(*) as count FROM projects
-    WHERE created_at >= datetime('now', '-30 days')
+    WHERE deleted_at IS NULL AND created_at >= datetime('now', '-30 days')
   `).get().count;
-  const completed = db.prepare("SELECT COUNT(*) as count FROM projects WHERE status = 'complete'").get().count;
-  const rendering = db.prepare("SELECT COUNT(*) as count FROM projects WHERE status = 'rendering'").get().count;
+  const completed = db.prepare("SELECT COUNT(*) as count FROM projects WHERE deleted_at IS NULL AND status = 'complete'").get().count;
+  const rendering = db.prepare("SELECT COUNT(*) as count FROM projects WHERE deleted_at IS NULL AND status = 'rendering'").get().count;
 
   const perEditor = db.prepare(`
     SELECT u.display_name, u.username, COUNT(p.id) as total,
       SUM(CASE WHEN p.created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as this_week,
       SUM(CASE WHEN p.status = 'complete' THEN 1 ELSE 0 END) as completed
     FROM users u
-    LEFT JOIN projects p ON p.user_id = u.id
+    LEFT JOIN projects p ON p.user_id = u.id AND p.deleted_at IS NULL
     WHERE u.role = 'editor'
     GROUP BY u.id
     ORDER BY total DESC
@@ -36,6 +36,7 @@ router.get('/stats', authMiddleware, adminOnly, (req, res) => {
   const recentProjects = db.prepare(`
     SELECT p.*, u.display_name as editor_name
     FROM projects p LEFT JOIN users u ON p.user_id = u.id
+    WHERE p.deleted_at IS NULL
     ORDER BY p.created_at DESC LIMIT 10
   `).all();
 
@@ -49,7 +50,7 @@ router.get('/users', authMiddleware, adminOnly, (req, res) => {
     SELECT u.id, u.username, u.display_name, u.role, u.created_at,
       COUNT(p.id) as project_count
     FROM users u
-    LEFT JOIN projects p ON p.user_id = u.id
+    LEFT JOIN projects p ON p.user_id = u.id AND p.deleted_at IS NULL
     GROUP BY u.id
     ORDER BY u.created_at ASC
   `).all();

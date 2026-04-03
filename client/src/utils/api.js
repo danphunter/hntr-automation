@@ -40,6 +40,8 @@ export const api = {
   createProject: (data) => request('POST', '/projects', data),
   updateProject: (id, data) => request('PUT', `/projects/${id}`, data),
   deleteProject: (id) => request('DELETE', `/projects/${id}`),
+  getDeletedProjects: () => request('GET', '/projects/deleted'),
+  restoreProject: (id) => request('POST', `/projects/${id}/restore`, {}),
   uploadAudio: (id, file) => {
     const fd = new FormData();
     fd.append('audio', file);
