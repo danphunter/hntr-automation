@@ -20,20 +20,24 @@ function getSettings(db) {
 
 // -- useapi.net Google Flow API ------------------------------------------------
 
-async function generateViaUseApi(useApiToken, prompt) {
+async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   const fetch = (await import('node-fetch')).default;
+  const body = {
+    prompt,
+    model: 'nano-banana-2',
+    aspectRatio: '16:9',
+    count: 1,
+  };
+  if (referenceImages.length > 0) {
+    body.referenceImages = referenceImages;
+  }
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      model: 'nano-banana-2',
-      aspectRatio: '16:9',
-      count: 1,
-    }),
+    body: JSON.stringify(body),
   });
   return response;
 }
@@ -150,9 +154,28 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   const prompt = rawPrompt;
 
+  const nicheRow = project.niche_id ? db.prepare('SELECT reference_images FROM niches WHERE id = ?').get(project.niche_id) : null;
+  let imgRefs = [];
+  try { imgRefs = nicheRow?.reference_images ? JSON.parse(nicheRow.reference_images) : []; } catch {}
+  const referenceImageIds = [];
+  for (const ref of imgRefs) {
+    let mgId = ref.mediaGenerationId;
+    if (!mgId && ref.filePath && fs.existsSync(ref.filePath)) {
+      try {
+        const buf = fs.readFileSync(ref.filePath);
+        const upRes = await uploadAssetToUseApi(useApiToken, buf, 'image/jpeg');
+        if (upRes.ok) {
+          const data = await upRes.json();
+          mgId = data.mediaGenerationId || data.id || null;
+        }
+      } catch {}
+    }
+    if (mgId) referenceImageIds.push({ mediaGenerationId: mgId });
+  }
+
   let apiRes;
   try {
-    apiRes = await generateViaUseApi(useApiToken, prompt);
+    apiRes = await generateViaUseApi(useApiToken, prompt, referenceImageIds);
   } catch (err) {
     console.error('[generate] useapi.net fetch error:', err.message);
     return res.status(500).json({ error: `Image generation failed: ${err.message}` });

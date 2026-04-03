@@ -202,6 +202,8 @@ export default function ProjectDetail() {
   const [animatingId, setAnimatingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const [applyingPattern, setApplyingPattern] = useState(false);
+  const [patternProgress, setPatternProgress] = useState('');
   const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
 
@@ -442,6 +444,23 @@ export default function ProjectDetail() {
       ));
     } catch (err) { setError(err.message); }
     finally { setAnimatingId(null); }
+  }
+
+  async function handleApplyStylePattern() {
+    if (!selectedStyle?.style_type) return;
+    const pattern = selectedStyle.style_type.toLowerCase().split(/[\s,]+/).filter(Boolean);
+    const toAnimate = scenes.filter((scene, i) => {
+      const mediaType = pattern[i % pattern.length];
+      return mediaType === 'video' && !scene.video_url;
+    });
+    if (!toAnimate.length) { alert('All video scenes already animated.'); return; }
+    setApplyingPattern(true);
+    for (let i = 0; i < toAnimate.length; i++) {
+      setPatternProgress(`Animating ${i + 1} of ${toAnimate.length}...`);
+      await handleAnimateScene(toAnimate[i].id);
+    }
+    setApplyingPattern(false);
+    setPatternProgress('');
   }
 
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -713,7 +732,7 @@ export default function ProjectDetail() {
                   onClick={handleGoToImages}
                   className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
-                  Generate Images <ChevronRight size={15} />
+                  Images <ChevronRight size={15} />
                 </button>
               </div>
             </>
@@ -775,6 +794,16 @@ export default function ProjectDetail() {
               {imagesReady > 0
                 ? `Resume Image Generation (${scenes.length - imagesReady} remaining)`
                 : 'Generate Images'}
+            </button>
+          )}
+
+          {selectedStyle?.style_type && (
+            <button
+              onClick={handleApplyStylePattern}
+              disabled={applyingPattern}
+              className="btn-primary flex items-center gap-2"
+            >
+              {applyingPattern ? patternProgress : 'Apply Style Pattern'}
             </button>
           )}
 
