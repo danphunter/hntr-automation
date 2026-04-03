@@ -202,6 +202,8 @@ export default function ProjectDetail() {
   const [animatingId, setAnimatingId] = useState(null);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [genProgress, setGenProgress] = useState({ current: 0, total: 0 });
+  const [applyingPattern, setApplyingPattern] = useState(false);
+  const [patternProgress, setPatternProgress] = useState('');
   const autoGenTriggered = useRef(false);
   const scenesRef = useRef([]);
 
@@ -443,6 +445,28 @@ export default function ProjectDetail() {
     } catch (err) { setError(err.message); }
     finally { setAnimatingId(null); }
   }
+
+  async function handleApplyStylePattern() {
+    if (!selectedStyle) return;
+    const pattern = (selectedStyle.style_type || '').toLowerCase().split(/[,\s]+/).filter(Boolean);
+    if (!pattern.length) return alert('No style pattern defined.');
+
+    const scenesToAnimate = scenes.filter((scene, i) => {
+      const mediaType = pattern[i % pattern.length];
+      return mediaType === 'video' && !scene.video_url;
+    });
+
+    if (!scenesToAnimate.length) return alert('All video scenes already animated.');
+
+    setApplyingPattern(true);
+    for (let i = 0; i < scenesToAnimate.length; i++) {
+      setPatternProgress(`Animating scene ${i + 1} of ${scenesToAnimate.length}...`);
+      await handleAnimateScene(scenesToAnimate[i].id);
+    }
+    setApplyingPattern(false);
+    setPatternProgress('');
+  }
+
 
   // ââ Step 5 ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   async function handleStartRender() {
@@ -796,6 +820,14 @@ export default function ProjectDetail() {
             </div>
           )}
 
+
+          {selectedStyle && (
+            <div>
+              <button onClick={handleApplyStylePattern} disabled={applyingPattern} className="btn-primary flex items-center gap-2">
+                {applyingPattern ? patternProgress : 'Apply Style Pattern'}
+              </button>
+            </div>
+          )}
 
           {/* Scene cards */}
           <div className="space-y-3">

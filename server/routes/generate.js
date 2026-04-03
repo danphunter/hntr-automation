@@ -10,6 +10,7 @@ const router = express.Router();
 const UPLOADS_BASE = process.env.UPLOADS_PATH || path.join(__dirname, '..', 'uploads');
 const IMAGES_DIR = path.join(UPLOADS_BASE, 'images');
 const VIDEOS_DIR = path.join(UPLOADS_BASE, 'videos');
+const REFS_DIR = path.join(UPLOADS_BASE, 'references');
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
 
@@ -20,20 +21,24 @@ function getSettings(db) {
 
 // -- useapi.net Google Flow API ------------------------------------------------
 
-async function generateViaUseApi(useApiToken, prompt) {
+async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   const fetch = (await import('node-fetch')).default;
+  const bodyObj = {
+    prompt,
+    model: 'nano-banana-2',
+    aspectRatio: '16:9',
+    count: 1,
+  };
+  if (referenceImages.length > 0) {
+    bodyObj.referenceImages = referenceImages.map(id => ({ mediaGenerationId: id }));
+  }
   const response = await fetch('https://api.useapi.net/v1/google-flow/images', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      model: 'nano-banana-2',
-      aspectRatio: '16:9',
-      count: 1,
-    }),
+    body: JSON.stringify(bodyObj),
   });
   return response;
 }
@@ -150,9 +155,33 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   const prompt = rawPrompt;
 
+  // Upload reference images from niche
+  let refMediaIds = [];
+  if (project.niche_id) {
+    const niche = db.prepare('SELECT reference_images FROM niches WHERE id = ?').get(project.niche_id);
+    let refImages = [];
+    try { refImages = JSON.parse(niche?.reference_images || '[]'); } catch {}
+    try {
+      for (const ref of refImages) {
+        if (!ref.filename) continue;
+        const refPath = path.join(REFS_DIR, ref.filename);
+        if (!fs.existsSync(refPath)) continue;
+        const imgBuf = fs.readFileSync(refPath);
+        const uploadRes = await uploadAssetToUseApi(useApiToken, imgBuf, 'image/jpeg');
+        if (uploadRes.ok) {
+          const data = await uploadRes.json();
+          const mediaId = (data.mediaGenerationId && data.mediaGenerationId.mediaGenerationId) || data.mediaGenerationId || data.id;
+          if (mediaId) refMediaIds.push(mediaId);
+        }
+      }
+    } catch (err) {
+      console.warn('[generate] Reference image upload failed, continuing without:', err.message);
+    }
+  }
+
   let apiRes;
   try {
-    apiRes = await generateViaUseApi(useApiToken, prompt);
+    apiRes = await generateViaUseApi(useApiToken, prompt, refMediaIds);
   } catch (err) {
     console.error('[generate] useapi.net fetch error:', err.message);
     return res.status(500).json({ error: `Image generation failed: ${err.message}` });
