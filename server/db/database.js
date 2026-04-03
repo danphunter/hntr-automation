@@ -177,6 +177,9 @@ function initDb() {
     "ALTER TABLE niches ADD COLUMN reference_images TEXT DEFAULT '[]'",
     "ALTER TABLE niches ADD COLUMN style_prompt TEXT DEFAULT ''",
     "ALTER TABLE projects ADD COLUMN deleted_at DATETIME DEFAULT NULL",
+    "ALTER TABLE users ADD COLUMN avatar TEXT",
+    "UPDATE users SET avatar = '/uploads/avatars/christian.jpg' WHERE username = 'christian'",
+    "DELETE FROM users WHERE username = 'john'",
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch {}
@@ -188,12 +191,11 @@ function initDb() {
     const insert = db.prepare('INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)');
     for (const u of [
       { id: 'user-dan', username: 'dan', password: 'dan123', name: 'Dan (Admin)', role: 'admin' },
-      { id: 'user-john', username: 'john', password: 'john123', name: 'John', role: 'editor' },
       { id: 'user-christian', username: 'christian', password: 'christian123', name: 'Christian', role: 'editor' },
     ]) {
       insert.run(u.id, u.username, bcrypt.hashSync(u.password, 10), u.name, u.role);
     }
-    console.log('✅ Seeded users: dan/dan123, john/john123, christian/christian123');
+    console.log('✅ Seeded users: dan/dan123, christian/christian123');
   }
 
   console.log(`✅ Database ready at ${DB_PATH}`);

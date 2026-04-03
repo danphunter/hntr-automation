@@ -138,8 +138,10 @@ export default function AdminDashboard() {
           <div className="space-y-2">
             {users.filter(u => u.role === 'editor').map(u => (
               <div key={u.id} className="card p-3 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-indigo-900/60 flex items-center justify-center text-sm font-bold text-indigo-300 flex-shrink-0">
-                  {u.display_name[0]}
+                <div className="w-8 h-8 rounded-full bg-indigo-900/60 flex items-center justify-center text-sm font-bold text-indigo-300 flex-shrink-0 overflow-hidden">
+                  {u.avatar
+                    ? <img src={u.avatar} alt={u.display_name} className="w-full h-full object-cover" />
+                    : u.display_name[0]}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-gray-200">{u.display_name}</div>

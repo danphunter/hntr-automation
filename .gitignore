@@ -8,6 +8,8 @@ server/uploads/*
 server/renders/*
 !server/uploads/.gitkeep
 !server/renders/.gitkeep
+!server/uploads/avatars/
+!server/uploads/avatars/**
 server/hntr-automation.db
 .env
 *.env.local
