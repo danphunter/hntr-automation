@@ -136,7 +136,7 @@ router.post('/:id/reference-image', authMiddleware, uploadRef.single('image'), a
       const apiRes = await uploadAssetToUseApi(useApiToken, imageBuffer, mimeType);
       if (apiRes.ok) {
         const data = await apiRes.json();
-        mediaGenerationId = data.mediaGenerationId || data.id || null;
+        mediaGenerationId = data?.mediaGenerationId?.mediaGenerationId || data?.mediaGenerationId || data?.id || null;
         console.log('[niche-ref] useapi.net asset upload response:', JSON.stringify(data).slice(0, 300));
       } else {
         console.warn('[niche-ref] useapi.net upload failed:', apiRes.status, await apiRes.text().catch(() => ''));

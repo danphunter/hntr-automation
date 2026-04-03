@@ -119,6 +119,16 @@ function CreateStyleModal({ onClose, onCreate }) {
             </select>
           </div>
 
+          <div>
+            <label className="label">Style Type Pattern</label>
+            <input
+              className="input"
+              value={form.style_type}
+              onChange={e => set('style_type', e.target.value)}
+              placeholder="video,image,video,image"
+            />
+          </div>
+
           <ConfigFields
             styleType={form.style_type}
             config={form.style_config}
@@ -246,6 +256,16 @@ function StyleRow({ niche, onUpdate, onDelete }) {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="label">Style Type Pattern</label>
+            <input
+              className="input"
+              value={form.style_type}
+              onChange={e => set('style_type', e.target.value)}
+              placeholder="video,image,video,image"
+            />
           </div>
 
           <ConfigFields
