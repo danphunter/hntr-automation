@@ -228,7 +228,7 @@ export default function ProjectDetail() {
 
   // ââ Initial load ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   useEffect(() => {
-    Promise.all([api.getProject(id), api.getNiches()])
+    Promise.all([api.getProject(id), api.getStyles()])
       .then(([proj, stls]) => {
         const scns = proj.scenes || [];
         setProject(proj);
