@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const FormData = require('form-data');
 const { getDb } = require('../db/database');
 const { authMiddleware } = require('../middleware/auth');
 const { getSceneMediaType } = require('../utils/mediaStyle');
@@ -49,15 +50,25 @@ async function saveImageFromBuffer(buffer) {
 
 async function uploadAssetToUseApi(useApiToken, imageBuffer, mimeType) {
   const fetch = (await import('node-fetch')).default;
-  const base64 = imageBuffer.toString('base64');
+  const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+  const form = new FormData();
+  form.append('file', imageBuffer, { filename: `scene.${ext}`, contentType: mimeType });
   const response = await fetch('https://api.useapi.net/v1/assets/email', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + useApiToken,
-      'Content-Type': 'application/json',
+      ...form.getHeaders(),
     },
-    body: JSON.stringify({ url: `data:${mimeType};base64,${base64}` }),
+    body: form,
+    signal: AbortSignal.timeout(30000),
   });
+  if (!response.ok) {
+    const bodyText = await response.text();
+    console.error('[uploadAsset] Upload failed — status:', response.status, '— body:', bodyText);
+    // Re-attach a readable-like object so callers can still check .ok and .status
+    response._cachedText = bodyText;
+    response.text = () => Promise.resolve(bodyText);
+  }
   return response;
 }
 
