@@ -455,12 +455,15 @@ export default function ProjectDetail() {
     });
     if (!toAnimate.length) { alert('All video scenes already animated per style pattern.'); return; }
     setApplyingPattern(true);
-    for (let i = 0; i < toAnimate.length; i++) {
-      setPatternProgress(`Animating ${i + 1} of ${toAnimate.length}...`);
-      await handleAnimateScene(toAnimate[i].id);
+    try {
+      for (let i = 0; i < toAnimate.length; i++) {
+        setPatternProgress(`Animating ${i + 1} of ${toAnimate.length}...`);
+        await handleAnimateScene(toAnimate[i].id);
+      }
+    } finally {
+      setApplyingPattern(false);
+      setPatternProgress('');
     }
-    setApplyingPattern(false);
-    setPatternProgress('');
   }
 
 
