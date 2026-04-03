@@ -40,7 +40,7 @@ function AppRoutes() {
         <Route path="projects/new" element={<NewProject />} />
         <Route path="projects/:id" element={<ProjectDetail />} />
         <Route path="settings" element={<Settings />} />
-        <Route path="styles" element={<AdminRoute><Styles /></AdminRoute>} />
+        <Route path="styles" element={<Styles />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
