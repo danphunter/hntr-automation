@@ -147,7 +147,20 @@ router.post('/:id/reference-image', authMiddleware, uploadRef.single('image'), a
   }
 
   const refUrl = `/api/niches/reference-image/${req.file.filename}`;
-  const newRef = { url: refUrl, filename: req.file.filename, filePath: req.file.path, mediaGenerationId };
+  // Read image as base64 for persistent storage (survives Railway redeploys)
+  let imageData = null;
+  try {
+    imageData = fs.readFileSync(req.file.path).toString('base64');
+  } catch (e) {
+    console.error('Failed to read image for base64 storage:', e.message);
+  }
+  const newRef = {
+    url: refUrl,
+    filename: req.file.filename,
+    filePath: req.file.path,
+    mediaGenerationId,
+    imageData  // base64 string for persistent re-upload capability
+  };
   const updatedRefs = [...currentRefs, newRef];
 
   db.prepare('UPDATE niches SET reference_images = ? WHERE id = ?').run(JSON.stringify(updatedRefs), niche.id);

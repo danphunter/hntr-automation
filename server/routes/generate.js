@@ -30,14 +30,23 @@ async function generateViaUseApi(useApiToken, prompt, referenceImages = []) {
   };
   // Re-upload any refs missing mediaGenerationId
   for (const ref of referenceImages) {
-    if (!ref.mediaGenerationId && ref.filePath) {
+    if (!ref.mediaGenerationId) {
       try {
-        const fs = require('fs');
-        const imgBuffer = fs.readFileSync(ref.filePath);
-        const uploadData = await uploadAssetToUseApi(useApiToken, imgBuffer, 'image/jpeg');
-        const uploadJson = await uploadData.json();
-        ref.mediaGenerationId = uploadJson?.mediaGenerationId?.mediaGenerationId || uploadJson?.mediaGenerationId || uploadJson?.id;
-        console.log(`Re-uploaded reference image, got mediaGenerationId: ${ref.mediaGenerationId}`);
+        let imgBuffer = null;
+        if (ref.filePath) {
+          try { imgBuffer = require('fs').readFileSync(ref.filePath); } catch (_) {}
+        }
+        if (!imgBuffer && ref.imageData) {
+          imgBuffer = Buffer.from(ref.imageData, 'base64');
+        }
+        if (imgBuffer) {
+          const uploadData = await uploadAssetToUseApi(useApiToken, imgBuffer, 'image/jpeg');
+          const uploadJson = await uploadData.json();
+          ref.mediaGenerationId = uploadJson?.mediaGenerationId?.mediaGenerationId || uploadJson?.mediaGenerationId || uploadJson?.id;
+          console.log(`Re-uploaded reference image, got mediaGenerationId: ${ref.mediaGenerationId}`);
+        } else {
+          console.warn('Reference image has no filePath or imageData — cannot re-upload');
+        }
       } catch (err) {
         console.error('Failed to re-upload reference image:', err.message);
       }
@@ -91,14 +100,23 @@ async function generateVideoViaUseApi(useApiToken, prompt, startImage, reference
   };
   // Re-upload any refs missing mediaGenerationId
   for (const ref of referenceImages) {
-    if (!ref.mediaGenerationId && ref.filePath) {
+    if (!ref.mediaGenerationId) {
       try {
-        const fs = require('fs');
-        const imgBuffer = fs.readFileSync(ref.filePath);
-        const uploadData = await uploadAssetToUseApi(useApiToken, imgBuffer, 'image/jpeg');
-        const uploadJson = await uploadData.json();
-        ref.mediaGenerationId = uploadJson?.mediaGenerationId?.mediaGenerationId || uploadJson?.mediaGenerationId || uploadJson?.id;
-        console.log(`Re-uploaded reference image, got mediaGenerationId: ${ref.mediaGenerationId}`);
+        let imgBuffer = null;
+        if (ref.filePath) {
+          try { imgBuffer = require('fs').readFileSync(ref.filePath); } catch (_) {}
+        }
+        if (!imgBuffer && ref.imageData) {
+          imgBuffer = Buffer.from(ref.imageData, 'base64');
+        }
+        if (imgBuffer) {
+          const uploadData = await uploadAssetToUseApi(useApiToken, imgBuffer, 'image/jpeg');
+          const uploadJson = await uploadData.json();
+          ref.mediaGenerationId = uploadJson?.mediaGenerationId?.mediaGenerationId || uploadJson?.mediaGenerationId || uploadJson?.id;
+          console.log(`Re-uploaded reference image, got mediaGenerationId: ${ref.mediaGenerationId}`);
+        } else {
+          console.warn('Reference image has no filePath or imageData — cannot re-upload');
+        }
       } catch (err) {
         console.error('Failed to re-upload reference image:', err.message);
       }
