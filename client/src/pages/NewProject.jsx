@@ -15,7 +15,7 @@ export default function NewProject() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.getStyles().then(setStyles).catch(() => {});
+    api.getNiches().then(setStyles).catch(() => {});
   }, []);
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
@@ -95,9 +95,8 @@ export default function NewProject() {
                         : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
                     }`}
                   >
-                    <div className="text-lg mb-1">{s.icon}</div>
                     <div className="text-sm font-medium text-gray-200">{s.name}</div>
-                    <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{s.description}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{s.style_type?.replace(/_/g, ' ')}</div>
                   </button>
                 ))}
               </div>
