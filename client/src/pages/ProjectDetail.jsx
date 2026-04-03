@@ -451,11 +451,27 @@ export default function ProjectDetail() {
 
   async function handleApplyStylePattern() {
     if (!selectedStyle?.style_type) return;
-    const pattern = selectedStyle.style_type.toLowerCase().split(/[\s,]+/).filter(Boolean);
-    const toAnimate = scenes.filter((scene, i) => {
-      const mediaType = pattern[i % pattern.length];
-      return mediaType === 'video' && !scene.video_url;
-    });
+    const styleType = selectedStyle.style_type;
+    const styleConfig = selectedStyle.style_config || {};
+
+    function isVideoScene(sceneIndex) {
+      switch (styleType) {
+        case 'all_video': return true;
+        case 'all_image': return false;
+        case 'alternating': {
+          const startWithVideo = styleConfig.startWith === 'video';
+          return (sceneIndex % 2 === 0) === startWithVideo;
+        }
+        case 'first_n_video':
+          return sceneIndex < (styleConfig.n || 5);
+        default: {
+          const pattern = styleType.toLowerCase().split(/[\s,]+/).filter(Boolean);
+          return pattern[sceneIndex % pattern.length] === 'video';
+        }
+      }
+    }
+
+    const toAnimate = scenes.filter((scene, i) => isVideoScene(i) && !scene.video_url);
     if (!toAnimate.length) { alert('All video scenes already animated per style pattern.'); return; }
     setApplyingPattern(true);
     try {
