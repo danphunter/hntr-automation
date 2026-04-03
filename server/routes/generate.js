@@ -38,6 +38,52 @@ async function generateViaUseApi(useApiToken, prompt) {
   return response;
 }
 
+// -- reCAPTCHA retry wrapper --------------------------------------------------
+// Retries fn() up to 3 times immediately (2.5s apart) on 403 reCAPTCHA errors,
+// then waits 30s and retries up to 3 more times. Other errors pass through immediately.
+
+async function withRecaptchaRetry(fn, label) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  async function tryOnce() {
+    const response = await fn();
+    if (response.status !== 403) return { response, recaptcha: false };
+    // Read body to check for reCAPTCHA — this consumes the stream
+    const text = await response.text();
+    if (!text.toLowerCase().includes('recaptcha')) {
+      // 403 but unrelated — return a response-like object with the body already read
+      return {
+        response: {
+          status: 403,
+          ok: false,
+          text: async () => text,
+          json: async () => { try { return JSON.parse(text); } catch { return {}; } },
+        },
+        recaptcha: false,
+      };
+    }
+    return { response: null, recaptcha: true };
+  }
+
+  for (let round = 1; round <= 2; round++) {
+    if (round === 2) {
+      console.log(`${label}: waiting 30s before second round of retries...`);
+      await sleep(30000);
+    }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { response, recaptcha } = await tryOnce();
+      if (!recaptcha) return response;
+      if (attempt < 3) {
+        const suffix = round === 2 ? ' (round 2)' : '';
+        console.log(`${label}: reCAPTCHA failed${suffix}, retry ${attempt}/3...`);
+        await sleep(2500);
+      }
+    }
+  }
+
+  throw new Error(`${label}: reCAPTCHA validation failed after 6 attempts`);
+}
+
 async function saveImageFromBuffer(buffer) {
   const filename = `img-${uuidv4()}.jpg`;
   const imgPath = path.join(IMAGES_DIR, filename);
@@ -152,10 +198,15 @@ router.post('/image/:sceneId', authMiddleware, async (req, res) => {
 
   let apiRes;
   try {
-    apiRes = await generateViaUseApi(useApiToken, prompt);
+    apiRes = await withRecaptchaRetry(
+      () => generateViaUseApi(useApiToken, prompt),
+      `Scene ${scene.scene_order}`
+    );
   } catch (err) {
-    console.error('[generate] useapi.net fetch error:', err.message);
-    return res.status(500).json({ error: `Image generation failed: ${err.message}` });
+    // All 6 reCAPTCHA retries exhausted — mark scene as failed
+    console.error(`[generate] ${err.message}`);
+    db.prepare('UPDATE scenes SET status = ? WHERE id = ?').run('failed', scene.id);
+    return res.status(500).json({ error: err.message });
   }
 
   if (apiRes.status === 429) {
