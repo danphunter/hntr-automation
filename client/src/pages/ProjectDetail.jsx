@@ -474,10 +474,25 @@ export default function ProjectDetail() {
     const toAnimate = scenes.filter((scene, i) => isVideoScene(i) && !scene.video_url);
     if (!toAnimate.length) { alert('All video scenes already animated per style pattern.'); return; }
     setApplyingPattern(true);
+    let completed = 0;
+    const total = toAnimate.length;
+    setPatternProgress(`Animating 0 of ${total}...`);
     try {
-      for (let i = 0; i < toAnimate.length; i++) {
-        setPatternProgress(`Animating ${i + 1} of ${toAnimate.length}...`);
-        await handleAnimateScene(toAnimate[i].id);
+      for (let i = 0; i < toAnimate.length; i += 2) {
+        const chunk = toAnimate.slice(i, i + 2);
+        await Promise.all(chunk.map(async (scene) => {
+          try {
+            const result = await api.animateScene(scene.id);
+            setScenes(prev => prev.map(s =>
+              s.id === scene.id ? { ...s, video_url: result.video_url, video_status: 'generated' } : s
+            ));
+          } catch (err) {
+            setError(`Scene ${scene.scene_order + 1} animation failed: ${err.message}`);
+          } finally {
+            completed++;
+            setPatternProgress(`Animating ${completed} of ${total}...`);
+          }
+        }));
       }
     } finally {
       setApplyingPattern(false);
