@@ -40,6 +40,20 @@ for (const sub of ['', 'images', 'references', 'videos', 'avatars']) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+// Copy bundled avatar assets from repo into UPLOADS_BASE so they're available
+// even when UPLOADS_BASE points to a Railway persistent volume (/data/uploads).
+const bundledAvatarsDir = path.join(__dirname, 'uploads', 'avatars');
+const targetAvatarsDir = path.join(UPLOADS_BASE, 'avatars');
+if (bundledAvatarsDir !== targetAvatarsDir && fs.existsSync(bundledAvatarsDir)) {
+  for (const file of fs.readdirSync(bundledAvatarsDir)) {
+    const dest = path.join(targetAvatarsDir, file);
+    if (!fs.existsSync(dest)) {
+      fs.copyFileSync(path.join(bundledAvatarsDir, file), dest);
+      console.log(`[Server] Copied bundled avatar: ${file} -> ${dest}`);
+    }
+  }
+}
+
 // Init DB
 initDb();
 
