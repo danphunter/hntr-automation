@@ -40,6 +40,23 @@ for (const sub of ['', 'images', 'references', 'videos', 'avatars']) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+// Seed bundled avatar files into the volume if UPLOADS_BASE is not the local path
+const _localAvatarsDir = path.join(__dirname, 'uploads', 'avatars');
+const _volumeAvatarsDir = path.join(UPLOADS_BASE, 'avatars');
+if (_volumeAvatarsDir !== _localAvatarsDir && fs.existsSync(_localAvatarsDir)) {
+  for (const file of fs.readdirSync(_localAvatarsDir)) {
+    const dest = path.join(_volumeAvatarsDir, file);
+    if (!fs.existsSync(dest)) {
+      try {
+        fs.copyFileSync(path.join(_localAvatarsDir, file), dest);
+        console.log(`[Server] Seeded avatar: ${file}`);
+      } catch (e) {
+        console.log(`[Server] Failed to seed avatar ${file}: ${e.message}`);
+      }
+    }
+  }
+}
+
 // Init DB
 initDb();
 
